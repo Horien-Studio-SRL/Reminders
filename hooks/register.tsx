@@ -66,6 +66,30 @@ export const addPrompt = (note: string) =>
     'Then call add_reminder. Only record it; the work itself waits for later.',
   ].join('\n')
 
+// Reminders one scan records at most; the rest are listed in Claude's reply.
+const SCAN_LIMIT = 30
+
+// The prompt `/todos --scan` sends: collect the unfinished work already in the code, optionally under `where`.
+export const scanPrompt = (where: string) =>
+  [
+    `Fill ${PATH} with the unfinished work already in this project${where.trim() ? `, looking only in ${where.trim()}` : ''}.`,
+    '',
+    'Look for:',
+    '- TODO, FIXME, HACK and XXX comments;',
+    '- stubs: code that throws "not implemented", returns a placeholder value, or is left empty for later;',
+    '- skipped or disabled tests;',
+    '- known issues and open questions written in the README or other docs.',
+    '',
+    'Search tracked files only (git grep in a git repository) and skip vendored, generated and build output.',
+    'Call list_reminders first and skip anything an open reminder already covers.',
+    'Read the code around each finding before judging it: drop what is stale or already done,',
+    'and merge findings that describe the same piece of work into one reminder.',
+    'Load the reminders:writing-reminders skill and word each reminder by it, with an at pointer and a priority.',
+    `Then call add_reminder for each, at most ${SCAN_LIMIT}: if there are more, keep the ones that matter most.`,
+    'Only record them; change no code.',
+    'Finish with how many you added per priority, and what you left out and why.',
+  ].join('\n')
+
 const ADD_DESCRIPTION = `Record unfinished work in ${PATH} so a later session can pick it up.
 Call it the moment you:
 - leave a partial implementation (a stub, a skipped branch, a placeholder value),
@@ -157,8 +181,8 @@ export const register: Register = on =>
   {
     await $.command.register({
       name: 'todos',
-      description: `Show open reminders from ${PATH}; --update updates this plugin`,
-      argumentHint: '[--update]',
+      description: `Show open reminders from ${PATH}; add <note> records one, --scan fills it from the code, --update updates this plugin`,
+      argumentHint: '[add <note> | --scan [path] | --update]',
     })
     await $.tool.register({
       name: 'add_reminder',
@@ -192,13 +216,27 @@ export const register: Register = on =>
 
   on('command.run', { command: 'todos' }, async ($, e) =>
   {
-    if (/^(--)?update$/.test(e.args.trim())) return { text: await updatePlugin($) }
+    // A command can't submit while its own run holds the prompt, so the prompt is sent once it ends.
+    const sendAfter = (text: string) =>
+    {
+      $.clock.after(0, () => void $.prompt.submit({ text, asUser: true }).catch(err => $.ui.toast(`Could not send to Claude: ${err}`)))
+      return {}
+    }
+
+    const args = e.args.trim()
+    if (/^(--)?update$/.test(args)) return { text: await updatePlugin($) }
+    const scan = /^(?:--)?scan(?:\s+(.*))?$/s.exec(args)
+    if (scan) return sendAfter(scanPrompt(scan[1] ?? ''))
+    // `/todos add <note>` sends the note; `/todos add` alone opens the pane with the Add field.
+    const note = /^(?:--)?add(?:\s+(.*))?$/s.exec(args)
+    if (note?.[1]?.trim()) return sendAfter(addPrompt(note[1]))
 
     asking = undefined
-    adding = false
+    adding = !!note
     const md = await load($)
     const rows = paneRows(parseOpen(md), parseDone(md).slice(0, RECENT))
     await $.ui.open({ id: PANE, title: 'Todos', focus: true, closeOnEscape: true, rows: Math.max(4, rows) })
+    if (adding) await $.ui.focus({ requestId: PANE, key: NOTE }).catch(() => undefined)
     return { text: 'Todos pane opened.' }
   })
 
@@ -376,7 +414,7 @@ export const register: Register = on =>
         )}
         {!open.length && (
           <Box marginTop={1}>
-            <Text dimColor>Nothing open. Press Add, or Claude adds items here when it leaves work unfinished.</Text>
+            <Text dimColor>Nothing open. Run /todos --scan to collect the TODOs already in the code, or press Add.</Text>
           </Box>
         )}
         {GROUPS.map(g =>
