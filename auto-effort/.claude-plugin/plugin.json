@@ -1,7 +1,10 @@
 {
   "name": "auto-effort",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Picks low, medium or high effort for each prompt, keeping the prompt cache warm",
-  "author": { "name": "Noash" },
-  "license": "MIT"
+  "author": {
+    "name": "Noash"
+  },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
 }

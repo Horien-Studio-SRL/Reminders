@@ -17,3 +17,10 @@ declare module 'claude-code' {
     'context-meter': { usage: ContextMeterUsage; model: ContextMeterModel; cache: ContextMeterCache }
   }
 }
+
+// auto-effort's own declaration, repeated so the band can read the effort it picked
+declare module 'claude-code' {
+  interface PluginState {
+    'auto-effort': { effort: string | null }
+  }
+}

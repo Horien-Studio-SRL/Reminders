@@ -5,6 +5,8 @@ import type { ContextMeterUsage } from '../types/index'
 const usageAtom = atom({ plugin: 'context-meter', key: 'usage' } as const, null)
 const modelAtom = atom({ plugin: 'context-meter', key: 'model' } as const, null)
 const cacheAtom = atom({ plugin: 'context-meter', key: 'cache' } as const, null)
+// auto-effort rewrites the effort after this mod's turn.step may have seen it, so its pick wins when set
+const autoEffortAtom = atom({ plugin: 'auto-effort', key: 'effort' } as const, null)
 
 // ponytail: assumes the 1-hour TTL Claude Code uses on subscriptions; API-key sessions on 5 minutes read too warm
 const CACHE_TTL_MS = 60 * 60 * 1000
@@ -116,7 +118,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const [m, u, c] = await Promise.all([read($, modelAtom), read($, usageAtom), read($, cacheAtom)])
+    const [m, u, c, auto] = await Promise.all([read($, modelAtom), read($, usageAtom), read($, cacheAtom), read($, autoEffortAtom)])
     if (u === null || e.props.hasSurvey) return next(e)
 
     const { Box, Text } = $.ui.resolve(e)
@@ -150,7 +152,7 @@ export const register: Register = on => {
                 : <Text color={c.left <= 10 ? 'warning' : 'success'}>cache {c.hit}% {c.left}m</Text>)}
               {c && m && <Text dimColor> │ </Text>}
               {m && <Text color="claude" bold>✻ {m.name}</Text>}
-              {m?.effort && <Text dimColor italic> · {m.effort}</Text>}
+              {m && (auto ?? m.effort) && <Text dimColor italic> · {auto ?? m.effort}</Text>}
             </Box>
           )}
         </Box>

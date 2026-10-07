@@ -15,7 +15,6 @@ const engine = (on: On, usage = { cache_read_input_tokens: 9_000, cache_creation
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: { ...usage, input_tokens: 10, output_tokens: 10, model: e.model } } as never
   })
   on('prompt.submit', (_$, e) => ({ text: e.text }))
-  on('ui.status', () => ({ value: undefined }))
   on('ui.toast', (_$, e) => {
     toasts.push(JSON.stringify(e))
     return { value: undefined } as never

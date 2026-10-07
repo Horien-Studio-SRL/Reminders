@@ -10,7 +10,7 @@ When you send a prompt, Haiku sorts it into one of three levels:
 | `medium` | Ordinary code edits and multi-step work. |
 | `high` | Hard debugging, design, large refactors, or "still broken" after a failed attempt. |
 
-The level holds for every step of that turn. A turn you didn't start, such as a background task finishing, keeps the previous level so effort doesn't flip back and forth. The status line shows the current level.
+The level holds for every step of that turn. A turn you didn't start, such as a background task finishing, keeps the previous level so effort doesn't flip back and forth. With context-meter installed, its band shows the current level; the mod draws nothing itself.
 
 Explore subagents run at `low` unless Claude asks for a specific effort. A subagent starts with an empty context, so this costs no cache.
 
@@ -18,7 +18,7 @@ The mod never goes above `high`. If you set `xhigh` or `max` with `/effort`, or 
 
 ## Budget mode
 
-Once any of your usage windows passes 80%, either the 5-hour or the 7-day one, turns the mod would run at `high` run at `medium` instead. The status line then shows `(budget)`. A level you pinned yourself isn't capped.
+Once any of your usage windows passes 80%, either the 5-hour or the 7-day one, turns the mod would run at `high` run at `medium` instead. context-meter then shows `(budget)` after the level. A level you pinned yourself isn't capped.
 
 ## The prompt cache
 

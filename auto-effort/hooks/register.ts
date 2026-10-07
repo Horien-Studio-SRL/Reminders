@@ -1,3 +1,4 @@
+import { atom, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 type Level = 'low' | 'medium' | 'high'
@@ -10,6 +11,8 @@ const LABELS = [
   'high: hard debugging, design, a large refactor, or a retry after a failed attempt',
 ]
 const LEVELS: readonly string[] = ['low', 'medium', 'high']
+// context-meter reads this to show the effort the mod picked
+const effortAtom = atom({ plugin: 'auto-effort', key: 'effort' } as const, null)
 
 let mode: 'auto' | 'off' | Level = 'auto'
 // the newest prompt's level; a turn with no prompt of its own keeps it, so effort doesn't flap
@@ -38,7 +41,7 @@ export const register: Register = on => {
     else if (arg === 'on') mode = 'auto'
     else if (arg === 'off' || LEVELS.includes(arg)) mode = arg as typeof mode
     else if (arg) return { text: `Unknown argument "${arg}". Use on, off, low, medium or high.` }
-    if (mode === 'off') $.ui.status(undefined)
+    if (mode === 'off') await update($, effortAtom, () => null)
     const now = mode === 'auto' ? `on${level ? `, last pick ${level}` : ''}` : mode === 'off' ? 'off' : `pinned to ${mode}`
     const limit = budget === 'off' ? 'off' : `at ${budget}%, ${Math.round(used)}% of the fullest usage window used`
     return { text: `auto-effort is ${now}. Budget mode is ${limit}.` }
@@ -72,7 +75,7 @@ export const register: Register = on => {
     const effort = mode !== 'auto' ? mode : level === 'high' && budgetOn() ? 'medium' : level
     if (!effort) return yield* next(e)
 
-    $.ui.status(`effort ${effort}${mode !== 'auto' ? ' (pinned)' : budgetOn() ? ' (budget)' : ''}`)
+    await update($, effortAtom, () => `${effort}${mode !== 'auto' ? ' (pinned)' : budgetOn() ? ' (budget)' : ''}`)
     const result = yield* next({ ...e, effort })
 
     // Writing more than it read right after a switch means the change went out top-level and rebuilt the cache.
