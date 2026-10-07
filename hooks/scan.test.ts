@@ -21,6 +21,8 @@ test('/todos --scan asks Claude to fill the list from the code', async ($, on) =
 
   expect(sent).toHaveLength(1)
   expect(sent[0]).toContain('Fill Docs/todos.md with the unfinished work already in this project.')
+  expect(sent[0]).toContain('TODO, FIXME, HACK and XXX in comments, in any case or form')
+  expect(sent[0]).toContain('"for now", "temporary"')
   expect(sent[0]).toContain('list_reminders')
   expect(sent[0]).toContain('reminders:writing-reminders')
   expect(sent[0]).toContain('add_reminder')
