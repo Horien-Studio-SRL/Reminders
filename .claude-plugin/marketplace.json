@@ -1,0 +1,6 @@
+{
+  "name": "horien-reminders",
+  "owner": { "name": "Horien Studio" },
+  "description": "Claude records unfinished work in Docs/todos.md.",
+  "plugins": [{ "name": "reminders", "source": "./" }]
+}
