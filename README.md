@@ -8,6 +8,7 @@ Claude Code mods I use every day. Each folder is one plugin, and all of them ins
 | [context-meter](context-meter/) | A band above the prompt with context fill, rate-limit windows, session cost, cache state, model and effort. |
 | [auto-effort](auto-effort/) | Haiku sorts each prompt into low, medium or high effort, and search subagents run at low. Budget mode caps effort at medium once a usage window passes 80%. |
 | [output-trimmer](output-trimmer/) | Long Bash output reaches Claude as its start, end and error lines, with the full output saved to a file. |
+| [subagent-router](subagent-router/) | Search subagents run on Haiku and general-purpose ones on Sonnet, so the main model's tokens go to the work only it can do. |
 
 ## Install
 
@@ -18,6 +19,7 @@ Install any mod by name:
 /plugin install context-meter --marketplace noash-xrc/claude-tools
 /plugin install auto-effort --marketplace noash-xrc/claude-tools
 /plugin install output-trimmer --marketplace noash-xrc/claude-tools
+/plugin install subagent-router --marketplace noash-xrc/claude-tools
 ```
 
 The first time, answer `y` to add the marketplace, then pick a scope. Each mod's README covers its settings and how to update it.

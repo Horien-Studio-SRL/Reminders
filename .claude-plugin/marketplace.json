@@ -6,6 +6,7 @@
     { "name": "reminders", "source": "./reminders" },
     { "name": "context-meter", "source": "./context-meter" },
     { "name": "auto-effort", "source": "./auto-effort" },
-    { "name": "output-trimmer", "source": "./output-trimmer" }
+    { "name": "output-trimmer", "source": "./output-trimmer" },
+    { "name": "subagent-router", "source": "./subagent-router" }
   ]
 }
