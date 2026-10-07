@@ -114,11 +114,52 @@ const reopenItem = async ($: EngineInterface, match: string) =>
   return r
 }
 
+// The marketplace this plugin is published in.
+const MARKETPLACE = 'horien-reminders'
+
+// `/todos --update`: refresh the marketplace, then update the installed copy, the two `claude plugin`
+// commands a person would run. The CLI picks the install's scope; a new version loads on restart.
+const updatePlugin = async ($: EngineInterface) =>
+{
+  const id = `${$.plugin.name}@${MARKETPLACE}`
+  const run = async (argv: string[]) =>
+  {
+    const r = await $.process.run(argv, { timeoutMs: 120_000 })
+    return { ok: r.exitCode === 0, out: `${r.stdout}\n${r.stderr}`.trim() }
+  }
+  // An installed plugin runs from the plugin cache; anywhere else is a folder loaded with --plugin-dir.
+  const fromFolder = !/[\\/]plugins[\\/]cache[\\/]/.test($.plugin.root)
+  const note = fromFolder
+    ? `\nThis session runs the plugin from ${$.plugin.root}, so the update reaches the installed copy other sessions load.`
+    : ''
+
+  $.ui.status('Checking for a reminders update...')
+  try
+  {
+    const market = await run(['claude', 'plugin', 'marketplace', 'update', MARKETPLACE])
+    if (!market.ok) return `Could not refresh the ${MARKETPLACE} marketplace:\n${market.out}`
+    const update = await run(['claude', 'plugin', 'update', id])
+    return (update.ok ? update.out : `Could not update ${id}:\n${update.out}`) + note
+  }
+  catch (err)
+  {
+    return `Could not run the claude CLI: ${err instanceof Error ? err.message : String(err)}`
+  }
+  finally
+  {
+    $.ui.status(undefined)
+  }
+}
+
 export const register: Register = on =>
 {
   on('session.start', async ($, e, next) =>
   {
-    await $.command.register({ name: 'todos', description: `Show open reminders from ${PATH}` })
+    await $.command.register({
+      name: 'todos',
+      description: `Show open reminders from ${PATH}; --update updates this plugin`,
+      argumentHint: '[--update]',
+    })
     await $.tool.register({
       name: 'add_reminder',
       description: ADD_DESCRIPTION,
@@ -149,8 +190,10 @@ export const register: Register = on =>
     return next(e)
   })
 
-  on('command.run', { command: 'todos' }, async $ =>
+  on('command.run', { command: 'todos' }, async ($, e) =>
   {
+    if (/^(--)?update$/.test(e.args.trim())) return { text: await updatePlugin($) }
+
     asking = undefined
     adding = false
     const md = await load($)

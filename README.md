@@ -44,6 +44,19 @@ Open reminders are grouped by priority: P1 Blocking, P2 Incomplete, P3 Polish. E
 
 Answer `y` to add the marketplace, then pick a scope.
 
+## Update
+
+Run `/todos --update`. It refreshes the `horien-reminders` marketplace, then updates the plugin at the scope it was installed with, and prints what changed. Restart Claude Code to load the new version.
+
+By hand, the same two steps are:
+
+```
+claude plugin marketplace update horien-reminders
+claude plugin update reminders@horien-reminders
+```
+
+A plugin installed at user scope is updated once for every project. One installed at project or local scope is updated in each project that has it.
+
 ## Credits
 
 The `writing-reminders` skill adapts [unslop](https://github.com/cursor/plugins/blob/main/pstack/skills/unslop/SKILL.md) by Lauren Tan and [writing-for-agents](https://github.com/mattpocock/skills/tree/main/skills/productivity/writing-for-agents) by Matt Pocock, both MIT licensed. See [CREDITS.md](CREDITS.md).
