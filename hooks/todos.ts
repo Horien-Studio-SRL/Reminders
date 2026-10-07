@@ -5,6 +5,7 @@
 export type Priority = 'P1' | 'P2' | 'P3'
 export type Todo = { priority: Priority; date: string; text: string; at?: string; line: number; done?: string }
 
+// Where the file goes when neither the `path` option nor a lowercase docs/ folder says otherwise.
 export const PATH = 'Docs/todos.md'
 export const DONE_KEEP = 20
 
@@ -138,6 +139,20 @@ export const reopen = (md: string, match: string): { md: string; reopened?: Todo
   const r = add(lines.join('\n'), { priority, date, text, at })
   return r.error ? { md, error: r.error } : { md: r.md, reopened: hit }
 }
+
+// Changes an open item's priority in place; the pane re-sorts it into its new group.
+export const setPriority = (md: string, match: string, priority: Priority): { md: string; error?: string } =>
+{
+  const hit = pick(parseOpen(md), match, 'open')
+  if (typeof hit === 'string') return { md, error: hit }
+
+  const lines = md.split(/\r?\n/)
+  lines[hit.line] = lines[hit.line]!.replace(/^- \[ \] P[123]/, `- [ ] ${priority}`)
+  return { md: lines.join('\n') }
+}
+
+// The file an `at` pointer names: `src/x.ts:42` and `src/x.ts:42-50` are `src/x.ts`.
+export const pointerFile = (at: string) => at.trim().replace(/:\d+(?:[-:]\d+)?$/, '')
 
 // One blank line between a header and its first item, none between items, trailing newline.
 const tidy = (lines: string[]) =>

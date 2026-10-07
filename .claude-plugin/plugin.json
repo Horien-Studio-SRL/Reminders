@@ -1,1 +1,16 @@
-{ "name": "reminders", "version": "0.3.1", "description": "Claude records unfinished work in Docs/todos.md; /todos shows the open list.", "author": { "name": "Noash" }, "license": "MIT" }
+{ "name": "reminders", "version": "0.4.0", "description": "Claude records unfinished work in Docs/todos.md; /todos shows the open list.", "author": { "name": "Noash" }, "license": "MIT",
+  "userConfig": {
+    "path": {
+      "type": "string",
+      "title": "Reminders file",
+      "description": "Where reminders are kept, relative to the project. Empty: docs/todos.md when the project has a docs folder, else Docs/todos.md.",
+      "default": ""
+    },
+    "showHeader": {
+      "type": "boolean",
+      "title": "Reminders line above the prompt",
+      "description": "Show the open and blocking counts at the top right of the prompt. /todos --header on|off sets it too.",
+      "default": true
+    }
+  }
+}

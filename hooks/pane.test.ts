@@ -13,11 +13,12 @@ const PROPS = {
   view: {},
 } as const
 
-// Docs/todos.md lives in `file.md`; the clock reads 2026-10-07. The engine's own pane drawing is a stub.
-const fakeDisk = (on: On, md: string) =>
+// Docs/todos.md lives in `file.md`, and every other path exists unless it ends in one `gone` names; the clock reads
+// 2026-10-07. The engine's own pane drawing is a stub.
+const fakeDisk = (on: On, md: string, gone: string[] = []) =>
 {
   const file = { md }
-  on('fs.exists', () => ({ value: true }))
+  on('fs.exists', (_$, e) => ({ value: !gone.some(g => e.path.replace(/\\/g, '/').endsWith(g)) }))
   on('fs.read', () => ({ value: file.md }))
   on('fs.write', (_$, e) => ((file.md = e.text), { value: undefined }))
   on('clock.now', () => ({ value: new Date(2026, 9, 7, 12).getTime() }))
@@ -52,7 +53,7 @@ for (const surface of SURFACES)
     expect((await ui.find({ key: 'row:Retry limit undecided' }))?.text).toContain('7d')
     expect((await ui.find({ key: 'row:Retry limit undecided' }))?.text).toContain('src/net/retry.ts:42')
     expect((await ui.find({ text: /3 open · 2 blocking/ }))).toBeDefined()
-    expect(await ui.findAll({ type: 'Button' })).toHaveLength(7)
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(12)
   })
 
   test(`Done completes that row (${surface})`, async ($, on) =>
@@ -141,6 +142,40 @@ for (const surface of SURFACES)
     await ui.input({ key: 'add:note', text: ' ' })
     expect(sent).toEqual([])
     expect(await ui.find({ key: 'add:note' })).toBeUndefined()
+  })
+
+  test(`a section's arrow folds and unfolds it (${surface})`, async ($, on) =>
+  {
+    fakeDisk(on, seeded())
+    const ui = await $.ui.mount({ plugin: 'reminders', surface, component: 'Pane', requestId: 'todos', props: PROPS })
+
+    await ui.press({ key: 'fold:P1' })
+    expect((await ui.find({ key: 'group:P1' }))?.text).toContain('Blocking 2')
+    expect(await ui.find({ key: 'row:Checkout crashes' })).toBeUndefined()
+
+    await ui.press({ key: 'fold:P1' })
+    expect(await ui.find({ key: 'row:Checkout crashes' })).toBeDefined()
+  })
+
+  test(`the priority button steps the item to the next priority (${surface})`, async ($, on) =>
+  {
+    const file = fakeDisk(on, seeded())
+    const ui = await $.ui.mount({ plugin: 'reminders', surface, component: 'Pane', requestId: 'todos', props: PROPS })
+
+    await ui.press({ key: 'prio:Checkout crashes' })
+    expect(parseOpen(file.md).find(t => t.text === 'Checkout crashes')?.priority).toBe('P2')
+    expect((await ui.find({ key: 'group:P2' }))?.text).toContain('Checkout crashes')
+
+    await ui.press({ key: 'prio:Tidy settings page' })
+    expect(parseOpen(file.md).find(t => t.text === 'Tidy settings page')?.priority).toBe('P1')
+  })
+
+  test(`a pointer to a missing file is flagged (${surface})`, async ($, on) =>
+  {
+    fakeDisk(on, seeded(), ['src/net/retry.ts'])
+    const ui = await $.ui.mount({ plugin: 'reminders', surface, component: 'Pane', requestId: 'todos', props: PROPS })
+    expect((await ui.find({ key: 'row:Retry limit undecided' }))?.text).toContain('file missing')
+    expect((await ui.find({ key: 'row:Checkout crashes' }))?.text).not.toContain('file missing')
   })
 
   test(`empty list (${surface})`, async ($, on) =>
