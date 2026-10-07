@@ -90,23 +90,39 @@ Turn it off with `/todos --header off`, or with the "Reminders line above the pr
 ## The /todos pane
 
 ```
-Todos [Add]                           6 open · 2 blocking
+  Todos [Add]                         6 open · 2 blocking
 
-▾ P1 Blocking 2
+  ▾ P1 Blocking 2
 › [Done] Checkout crashes when the cart is empty.   [Ask]
     [P1] src/checkout/order.ts:42                      1d
   [Done] Retry limit has no value.                  [Ask]
     [P1] src/net/retry.ts:42 · file missing            5w
 
-▸ P3 Polish 4
+  ▸ P3 Polish 4
 
-▾ Recently done
+  ▾ Recently done
   [Undo] Login redirect loops on expired session.   today
 
-↑↓ move · Enter press · Esc close
+  ↑↓ move · Enter press · Esc close
 ```
 
-Open reminders are grouped by priority. Each shows its text, the file it points at, and how long ago it was recorded. ↑↓ move between buttons, Enter presses the highlighted one, Esc closes the pane.
+Open reminders are grouped by priority. Each shows its text, the file it points at, and how long ago it was recorded.
+
+↑↓ (or Tab and Shift+Tab) move between buttons, and `›` marks the line holding the focus. Enter presses the highlighted button, Esc closes the pane.
+
+← and → do nothing in the pane: Claude Code binds them in no plugin pane, so they reach the prompt underneath.
+
+Optionally, to keep them from reaching the prompt, have them step between buttons like Shift+Tab and Tab by adding this to `~/.claude/keybindings.json`. It applies to every plugin's pane, and at the end of the list it steps onto Claude Code's own pane tabs and close mark:
+
+```json
+{
+  "bindings": [
+    { "context": "Pane", "bindings": { "left": "abovePrompt:previous", "right": "abovePrompt:next" } }
+  ]
+}
+```
+
+If the file already has a `bindings` list, add the `Pane` entry to it.
 
 | Button | What it does |
 | --- | --- |

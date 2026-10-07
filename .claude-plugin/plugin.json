@@ -1,4 +1,4 @@
-{ "name": "reminders", "version": "0.4.1", "description": "Claude records unfinished work in Docs/todos.md; /todos shows the open list.", "author": { "name": "Noash" }, "license": "MIT",
+{ "name": "reminders", "version": "0.4.2", "description": "Claude records unfinished work in Docs/todos.md; /todos shows the open list.", "author": { "name": "Noash" }, "license": "MIT",
   "userConfig": {
     "path": {
       "type": "string",

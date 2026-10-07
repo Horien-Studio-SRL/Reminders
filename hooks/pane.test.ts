@@ -34,6 +34,10 @@ const stubPrompt = (on: On) =>
   return sent
 }
 
+// The person's arrow key moving the pane's focus ring onto `element`, as the engine raises it.
+const arrowTo = ($: Parameters<Parameters<typeof test>[1]>[0], element: string) =>
+  $.ui.focus({ component: 'Pane', requestId: 'todos', plugin: 'reminders', element, origin: { kind: 'person' } } as never)
+
 const seeded = () =>
 {
   let md = add(EMPTY, { priority: 'P3', date: '2026-10-07', text: 'Tidy settings page' }).md
@@ -176,6 +180,24 @@ for (const surface of SURFACES)
     const ui = await $.ui.mount({ plugin: 'reminders', surface, component: 'Pane', requestId: 'todos', props: PROPS })
     expect((await ui.find({ key: 'row:Retry limit undecided' }))?.text).toContain('file missing')
     expect((await ui.find({ key: 'row:Checkout crashes' }))?.text).not.toContain('file missing')
+  })
+
+  test(`the focused button's row, header or title shows the marker (${surface})`, async ($, on) =>
+  {
+    fakeDisk(on, seeded())
+    on('ui.focus', () => ({}))
+    const ui = await $.ui.mount({ plugin: 'reminders', surface, component: 'Pane', requestId: 'todos', props: PROPS })
+
+    await arrowTo($, 'ask:Retry limit undecided')
+    expect((await ui.find({ key: 'row:Retry limit undecided' }))?.text).toContain('›')
+    expect((await ui.find({ key: 'row:Checkout crashes' }))?.text).not.toContain('›')
+
+    await arrowTo($, 'fold:P1')
+    expect((await ui.find({ key: 'group:P1' }))?.text).toMatch(/^› ▾ P1/)
+    expect((await ui.find({ key: 'row:Retry limit undecided' }))?.text).not.toContain('›')
+
+    await arrowTo($, 'add')
+    expect((await ui.find({ key: 'title' }))?.text).toMatch(/^› Todos/)
   })
 
   test(`empty list (${surface})`, async ($, on) =>

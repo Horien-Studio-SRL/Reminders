@@ -364,14 +364,15 @@ export const register: Register = (on, options) =>
     return { text: 'Todos pane opened.' }
   })
 
+  // The marker follows the focus ring. It is set before `next`, which draws the pane with the ring moved,
+  // and put back if the move is refused.
   on('ui.focus', { requestId: PANE }, async ($, e, next) =>
   {
+    const was = focused
+    focused = e.element
     const r = await next(e)
-    if (!r.deny)
-    {
-      focused = e.element
-      $.ui.invalidate('ui.render')
-    }
+    if (r.deny) focused = was
+    $.ui.invalidate('ui.render')
     return r
   }).catch(($, e, next) => (next.called ? {} : next(e)))
 
@@ -522,9 +523,13 @@ export const register: Register = (on, options) =>
       await $.ui.focus({ requestId: PANE, key: rowKey(t) }).catch(() => undefined)
     }
 
-    // A section header: the fold arrow, then the title and count.
+    // The two columns left of every line: the marker on the line holding the focus, else blank.
+    const marker = (isFocused: boolean) => <Text color="claude">{isFocused ? '› ' : '  '}</Text>
+
+    // A section header: the marker, the fold arrow, then the title and count.
     const sectionHeader = (section: string, title: JSX.Element) => (
       <Box flexDirection="row">
+        {marker(has(foldKey(section)))}
         <Button key={foldKey(section)} label={fold.has(section) ? '▸' : '▾'} plain dimColor={!has(foldKey(section))} onPress={() => toggleFold(section)} />
         <Text> </Text>
         {title}
@@ -541,7 +546,7 @@ export const register: Register = (on, options) =>
           <Box flexDirection="row">
             <Box flexDirection="column" width={LEFT} flexShrink={0}>
               <Box>
-                <Text color="claude">{isFocused ? '› ' : '  '}</Text>
+                {marker(isFocused)}
                 <Button key={rowKey(t)} label="[Done]" plain dimColor={!has(rowKey(t))} onPress={() => markDone(t)} />
               </Box>
               <Box justifyContent="flex-end">
@@ -582,7 +587,7 @@ export const register: Register = (on, options) =>
       return (
         <Box key={`donerow:${t.text}`} flexDirection="row">
           <Box flexShrink={0}>
-            <Text color="claude">{isFocused ? '› ' : '  '}</Text>
+            {marker(isFocused)}
             <Button key={undoKey(t)} label="[Undo]" plain dimColor={!isFocused} onPress={() => undo(t)} />
           </Box>
           <Box flexGrow={1} flexShrink={1} paddingLeft={1}>
@@ -597,8 +602,9 @@ export const register: Register = (on, options) =>
 
     return (
       <Box flexDirection="column" width={e.props.bodyColumns}>
-        <Box flexDirection="row" justifyContent="space-between">
+        <Box key="title" flexDirection="row" justifyContent="space-between">
           <Box flexShrink={0}>
+            {marker(has(ADD))}
             <Text bold>Todos </Text>
             <Button key={ADD} label="[Add]" plain dimColor={!has(ADD)} onPress={toggleAdd} />
           </Box>
@@ -607,15 +613,17 @@ export const register: Register = (on, options) =>
           </Text>
         </Box>
         {adding && (
-          <Input
-            key={NOTE}
-            placeholder="What to remember? Claude words it and adds it"
-            submitLabel="send"
-            onSubmit={note => sendNote(note)}
-          />
+          <Box paddingLeft={2}>
+            <Input
+              key={NOTE}
+              placeholder="What to remember? Claude words it and adds it"
+              submitLabel="send"
+              onSubmit={note => sendNote(note)}
+            />
+          </Box>
         )}
         {!open.length && (
-          <Box marginTop={1}>
+          <Box marginTop={1} paddingLeft={2}>
             <Text dimColor>Nothing open. Run /todos --scan to collect the TODOs already in the code, or press Add.</Text>
           </Box>
         )}
@@ -640,7 +648,7 @@ export const register: Register = (on, options) =>
             {!fold.has('done') && recent.map(doneRow)}
           </Box>
         )}
-        <Box marginTop={1}>
+        <Box marginTop={1} paddingLeft={2}>
           <Text dimColor>{e.props.isFocused ? '↑↓ move · Enter press · Esc close' : 'ctrl+x tab to select'}</Text>
         </Box>
       </Box>
