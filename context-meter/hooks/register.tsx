@@ -10,6 +10,8 @@ const autoEffortAtom = atom({ plugin: 'auto-effort', key: 'effort' } as const, n
 
 // ponytail: assumes the 1-hour TTL Claude Code uses on subscriptions; API-key sessions on 5 minutes read too warm
 const CACHE_TTL_MS = 60 * 60 * 1000
+// past this, a prompt sent on a cold cache rewrites enough to be worth a warning
+const COLD_WARN_TOKENS = 80_000
 
 const LIMIT_LABEL: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' }
 const BAR_CELLS = 8
@@ -59,6 +61,7 @@ let seen = ''
 let watch: Timer | undefined
 // when the last main-thread request finished; each request refreshes the cache's TTL
 let cachedAt: number | undefined
+let warnedCold = false
 
 const cacheLeft = async ($: EngineInterface) => {
   if (cachedAt === undefined) return
@@ -90,6 +93,19 @@ export const register: Register = on => {
     return started
   })
 
+  // The prompt goes out anyway; the toast only says what it will cost.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.turnId === undefined && !e.text.startsWith('/') && cachedAt !== undefined && !warnedCold) {
+      const cold = (await $.clock.now()) - cachedAt >= CACHE_TTL_MS
+      const tokens = (await read($, usageAtom))?.tokens ?? 0
+      if (cold && tokens >= COLD_WARN_TOKENS) {
+        warnedCold = true
+        $.ui.toast(`The prompt cache is cold and the context is ${k(tokens)}: this prompt rewrites all of it. Next time, /compact or /clear first.`, { timeoutMs: 10_000 })
+      }
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   on('session.measure', async ($, e, next) => {
     await update($, usageAtom, () => toUsage(e))
     return next(e)
@@ -106,6 +122,7 @@ export const register: Register = on => {
     const total = u ? u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens : 0
     if (u && total > 0) {
       cachedAt = await $.clock.now()
+      warnedCold = false
       await update($, cacheAtom, () => ({ hit: Math.round((u.cache_read_input_tokens / total) * 100), left: CACHE_TTL_MS / 60_000 }))
     }
     return result

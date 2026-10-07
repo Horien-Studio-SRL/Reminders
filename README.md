@@ -10,6 +10,7 @@ Claude Code mods I use every day. Each folder is one plugin, and all of them ins
 | [output-trimmer](output-trimmer/) | Long Bash output reaches Claude as its start, end and error lines, with the full output saved to a file. |
 | [subagent-router](subagent-router/) | Search subagents run on Haiku and general-purpose ones on Sonnet, so the main model's tokens go to the work only it can do. |
 | [savings-meter](savings-meter/) | `/savings` shows what output-trimmer, subagent-router and auto-effort saved. |
+| [idle-compact](idle-compact/) | Compacts an idle session with a large context just before its prompt cache expires. |
 
 ## Install
 
@@ -22,6 +23,7 @@ Install any mod by name:
 /plugin install output-trimmer --marketplace noash-xrc/claude-tools
 /plugin install subagent-router --marketplace noash-xrc/claude-tools
 /plugin install savings-meter --marketplace noash-xrc/claude-tools
+/plugin install idle-compact --marketplace noash-xrc/claude-tools
 ```
 
 The first time, answer `y` to add the marketplace, then pick a scope. Each mod's README covers its settings and how to update it.

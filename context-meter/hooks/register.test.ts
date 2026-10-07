@@ -123,3 +123,32 @@ test('the cache shows its hit rate and minutes left, then goes cold', async ($, 
   await clock.advance(9 * 60_000)
   expect((await bandText($))[1]).toEqual('$0.50 │ cache cold │ ✻ Opus 5.5 · high')
 })
+
+test('a prompt on a cold cache with a large context warns once', async ($, on) => {
+  const clock = mock.clock(on)
+  usage(on)
+  coreBand(on)
+  const toasts: string[] = []
+  on('session.start', () => ({ cwd: '/' }))
+  on('ui.status', () => ({ value: undefined }))
+  on('ui.toast', (_$, e) => {
+    toasts.push((e as { text: string }).text)
+    return { value: undefined } as never
+  })
+  on('prompt.submit', (_$, e) => ({ text: e.text }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('settings.read', () => ({ value: {} }))
+  on('turn.step', async function* (_$, e) {
+    const usage = { input_tokens: 1_000, cache_read_input_tokens: 90_000, cache_creation_input_tokens: 9_000, output_tokens: 500, model: e.model }
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage } as never
+  })
+
+  await $.session.start({ cwd: '/' } as never)
+  for await (const _ of $.turn.step({ turnId: 't', index: 0, model: 'claude-opus-5-5', effort: 'high', messageCount: 1 }));
+  await clock.advance(250)
+  await $.prompt.submit({ text: 'warm' })
+  await clock.advance(60 * 60_000)
+  await $.prompt.submit({ text: 'back from lunch' })
+  await $.prompt.submit({ text: 'again' })
+  expect(toasts).toEqual(['The prompt cache is cold and the context is 150k: this prompt rewrites all of it. Next time, /compact or /clear first.'])
+})
