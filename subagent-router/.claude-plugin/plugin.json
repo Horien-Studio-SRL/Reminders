@@ -1,7 +1,10 @@
 {
   "name": "subagent-router",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Runs search subagents on Haiku and general-purpose ones on Sonnet, so the main model's tokens go to the work only it can do",
-  "author": { "name": "Noash" },
-  "license": "MIT"
+  "author": {
+    "name": "Noash"
+  },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
 }

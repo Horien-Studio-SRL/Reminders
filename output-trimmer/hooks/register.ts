@@ -1,3 +1,4 @@
+import { atom, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 const MAX_LINES = 150
@@ -7,6 +8,8 @@ const TAIL = 60
 const MAX_SIGNALS = 40
 const LINE_CHARS = 300
 const DIR = 'claude-trimmed'
+// savings-meter reads this
+const trimmedAtom = atom({ plugin: 'output-trimmer', key: 'trimmed' } as const, 0)
 const SIGNAL = /error|fail|warn|exception|traceback|panic|assert|denied|not found|✗|✖/i
 // Claude asked for exactly this text (a file, a diff, a search), so trimming it would hide what it came for.
 const READS = /^\s*(cat|type|head|tail|sed|awk|less|more|grep|rg|jq|diff|git\s+(diff|show|log|blame))\b/
@@ -33,7 +36,8 @@ export const trim = (text: string): string | undefined => {
   return trimmed.length < text.length ? trimmed : undefined
 }
 
-const save = async ($: EngineInterface, id: string, text: string) => {
+const save = async ($: EngineInterface, id: string, text: string, kept: number) => {
+  await update($, trimmedAtom, n => n + Math.round((text.length - kept) / 4))
   const tmp = (await $.env.get('TEMP')) ?? (await $.env.get('TMPDIR')) ?? '/tmp'
   const path = `${tmp.replace(/\\/g, '/')}/${DIR}/${id}.txt`
   await $.fs.write(path, text)
@@ -49,7 +53,7 @@ export const register: Register = on => {
     // A failed command's output only reaches Claude as error text; a deny after the run delivers the trimmed text the same way.
     if (ran.isError) {
       const short = ran.text === undefined ? undefined : trim(ran.text)
-      return short === undefined || ran.text === undefined ? ran : { deny: `${await save($, id, ran.text)}\n${short}` }
+      return short === undefined || ran.text === undefined ? ran : { deny: `${await save($, id, ran.text, short.length)}\n${short}` }
     }
 
     const r = ran.result
@@ -57,7 +61,7 @@ export const register: Register = on => {
     const stdout = trim(r.stdout)
     const stderr = trim(r.stderr)
     if (stdout === undefined && stderr === undefined) return ran
-    const note = await save($, id, `${r.stdout}\n${r.stderr}`)
+    const note = await save($, id, `${r.stdout}\n${r.stderr}`, (stdout ?? r.stdout).length + (stderr ?? r.stderr).length)
     return { result: { ...r, stdout: `${note}\n${stdout ?? r.stdout}`, stderr: stderr ?? r.stderr }, context: ran.context }
   }).catch(($, e, next) => next(e))
 }

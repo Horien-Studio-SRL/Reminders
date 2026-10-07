@@ -7,6 +7,7 @@
     { "name": "context-meter", "source": "./context-meter" },
     { "name": "auto-effort", "source": "./auto-effort" },
     { "name": "output-trimmer", "source": "./output-trimmer" },
-    { "name": "subagent-router", "source": "./subagent-router" }
+    { "name": "subagent-router", "source": "./subagent-router" },
+    { "name": "savings-meter", "source": "./savings-meter" }
   ]
 }

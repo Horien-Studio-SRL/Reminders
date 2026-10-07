@@ -1,0 +1,8 @@
+{
+  "name": "savings-meter",
+  "version": "0.1.0",
+  "description": "Keeps a ledger of what output-trimmer, subagent-router and auto-effort save, shown by /savings",
+  "author": { "name": "Noash" },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

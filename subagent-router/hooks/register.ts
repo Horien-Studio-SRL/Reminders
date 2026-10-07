@@ -1,3 +1,4 @@
+import { atom, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 // Agent types whose work a cheaper model does as well; any other type keeps its own model.
@@ -7,6 +8,8 @@ const RANK = ['haiku', 'sonnet', 'opus']
 const rank = (model: string) => RANK.findIndex(m => model.toLowerCase().includes(m))
 
 let enabled = true
+// savings-meter reads this to price the routed agents' tokens
+const routedAtom = atom({ plugin: 'subagent-router', key: 'routed' } as const, [])
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -23,9 +26,13 @@ export const register: Register = on => {
   })
 
   // A model Claude named in the call, a fork or a teammate is left alone; so is a route that wouldn't be cheaper than the parent.
-  on('agent.spawn', ($, e, next) => {
+  on('agent.spawn', async ($, e, next) => {
     const model = ROUTES[e.subagentType]
     const cheaper = model !== undefined && rank(model) < rank(e.parentModel)
-    return enabled && cheaper && e.model === undefined && !e.fork && !e.isTeammate ? next({ ...e, model }) : next(e)
+    if (!enabled || !cheaper || e.model !== undefined || e.fork || e.isTeammate) return next(e)
+    const r = await next({ ...e, model })
+    const id = 'agentId' in r ? r.agentId : undefined
+    if (id) await update($, routedAtom, ids => [...ids, id])
+    return r
   }).catch(($, e, next) => next(e))
 }

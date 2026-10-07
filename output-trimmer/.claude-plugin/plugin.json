@@ -1,7 +1,10 @@
 {
   "name": "output-trimmer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Trims long Bash output to its start, end and error lines, and saves the full output to a file",
-  "author": { "name": "Noash" },
-  "license": "MIT"
+  "author": {
+    "name": "Noash"
+  },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
 }
