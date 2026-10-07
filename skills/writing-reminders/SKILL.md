@@ -27,6 +27,15 @@ Write for the second reader. The line is a hand-off to someone who starts cold.
 - End on a word or a period. The file format reads a trailing `(at ...)` or `(done ...)` group as its own field, so text ending in a parenthesised group can misparse.
 - The pane draws text as typed, so backticks and asterisks show up literally. Write names bare.
 
+## Language
+
+One file, one language, so everyone who reads the list can read every line.
+
+- Write in the language of the reminders already in the file.
+- If the file has none, use the language of the project's README or docs.
+- If the project has neither, use the language of the person's note or message.
+- Code names stay as spelled in the project, whatever the language around them. The phrases "Done when", "Undecided" and "Options" are translated with the rest of the line.
+
 ## Plain writing
 
 The reader acts on the line, so every word names a thing, a number or an action.

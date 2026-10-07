@@ -4,7 +4,7 @@ A Claude Code mod. Claude records unfinished work (partial implementations, unde
 
 - `add_reminder`, `list_reminders`, `complete_reminder`, `reopen_reminder`: tools Claude calls.
 - `/todos`: a pane listing the reminders, plus the commands below.
-- `writing-reminders`: a skill Claude loads before writing a reminder, so each line reads clearly to a later session that has none of the original context.
+- `writing-reminders`: a skill Claude loads before writing a reminder, so each line reads clearly to a later session that has none of the original context. It keeps the file in one language: that of the reminders already there, else the project's docs, else your note.
 
 ## Commands
 
