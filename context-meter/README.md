@@ -4,11 +4,12 @@ A Claude Code mod that draws two rows at the right of the band above the prompt:
 
 ```
 ▰▰▰▱▱▱▱▱ 42% 84k/200k │ 5h 24%  7d  7%
-                  $1.24 │ ✻ Opus 5.5 · high
+   $1.24 │ cache 97% 52m │ ✻ Opus 5.5 · high
 ```
 
 - The first row shows how full the context window is, then how much of each rate-limit window you have used. Each figure turns yellow at 60% and red at 85%.
-- The second row shows the session's cost, the model and its effort level. A `/model` switch shows within a second.
+- The second row shows the session's cost, the prompt cache, the model and its effort level. A `/model` switch shows within a second.
+- The cache figure is the share of the last request's input that came from the cache, then the minutes until it expires. It turns yellow under 10 minutes and shows `cache cold` once expired. Your next prompt after that pays to cache the whole conversation again, so that's a cheap moment to `/compact`. The countdown assumes the 1-hour cache that Claude Code uses on subscriptions.
 - After a compaction the fill is an estimate until the next response, marked with `~`.
 
 It costs no tokens: every figure comes from what Claude Code already tracks.

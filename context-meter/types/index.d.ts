@@ -9,8 +9,11 @@ export type ContextMeterUsage = {
 
 export type ContextMeterModel = { name: string; effort?: string } | null
 
+// hit: share of the last main request's input read from the cache; left: whole minutes until it expires
+export type ContextMeterCache = { hit: number; left: number } | null
+
 declare module 'claude-code' {
   interface PluginState {
-    'context-meter': { usage: ContextMeterUsage; model: ContextMeterModel }
+    'context-meter': { usage: ContextMeterUsage; model: ContextMeterModel; cache: ContextMeterCache }
   }
 }

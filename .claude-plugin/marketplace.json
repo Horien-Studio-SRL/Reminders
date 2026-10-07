@@ -4,6 +4,8 @@
   "description": "Claude Code mods I use every day.",
   "plugins": [
     { "name": "reminders", "source": "./reminders" },
-    { "name": "context-meter", "source": "./context-meter" }
+    { "name": "context-meter", "source": "./context-meter" },
+    { "name": "auto-effort", "source": "./auto-effort" },
+    { "name": "output-trimmer", "source": "./output-trimmer" }
   ]
 }

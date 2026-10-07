@@ -4,6 +4,10 @@ import type { ContextMeterUsage } from '../types/index'
 
 const usageAtom = atom({ plugin: 'context-meter', key: 'usage' } as const, null)
 const modelAtom = atom({ plugin: 'context-meter', key: 'model' } as const, null)
+const cacheAtom = atom({ plugin: 'context-meter', key: 'cache' } as const, null)
+
+// ponytail: assumes the 1-hour TTL Claude Code uses on subscriptions; API-key sessions on 5 minutes read too warm
+const CACHE_TTL_MS = 60 * 60 * 1000
 
 const LIMIT_LABEL: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' }
 const BAR_CELLS = 8
@@ -51,6 +55,14 @@ const effortFromSettings = async ($: EngineInterface, id: string) => {
 
 let seen = ''
 let watch: Timer | undefined
+// when the last main-thread request finished; each request refreshes the cache's TTL
+let cachedAt: number | undefined
+
+const cacheLeft = async ($: EngineInterface) => {
+  if (cachedAt === undefined) return
+  const left = Math.max(0, Math.ceil((cachedAt + CACHE_TTL_MS - (await $.clock.now())) / 60_000))
+  await update($, cacheAtom, prev => (prev === null || prev.left === left ? prev : { ...prev, left }))
+}
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -65,6 +77,7 @@ export const register: Register = on => {
     seen = id
     watch?.cancel()
     watch = $.clock.every(1000, async () => {
+      await cacheLeft($)
       const now = await $.session.model()
       if (now === seen) return
       seen = now
@@ -87,6 +100,12 @@ export const register: Register = on => {
     await update($, modelAtom, () => model(e.model, e.effort))
     const result = yield* next(e)
     $.clock.after(250, () => void refresh($))
+    const u = result.usage
+    const total = u ? u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens : 0
+    if (u && total > 0) {
+      cachedAt = await $.clock.now()
+      await update($, cacheAtom, () => ({ hit: Math.round((u.cache_read_input_tokens / total) * 100), left: CACHE_TTL_MS / 60_000 }))
+    }
     return result
   })
 
@@ -97,7 +116,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const [m, u] = await Promise.all([read($, modelAtom), read($, usageAtom)])
+    const [m, u, c] = await Promise.all([read($, modelAtom), read($, usageAtom), read($, cacheAtom)])
     if (u === null || e.props.hasSurvey) return next(e)
 
     const { Box, Text } = $.ui.resolve(e)
@@ -123,9 +142,13 @@ export const register: Register = on => {
               </Text>
             ))}
           </Box>
-          {(m || u.usd !== undefined) && (
+          {(m || c || u.usd !== undefined) && (
             <Box>
-              {u.usd !== undefined && <Text dimColor>${u.usd.toFixed(2)}{m ? ' │ ' : ''}</Text>}
+              {u.usd !== undefined && <Text dimColor>${u.usd.toFixed(2)}{m || c ? ' │ ' : ''}</Text>}
+              {c && (c.left === 0
+                ? <Text color="error">cache cold</Text>
+                : <Text color={c.left <= 10 ? 'warning' : 'success'}>cache {c.hit}% {c.left}m</Text>)}
+              {c && m && <Text dimColor> │ </Text>}
               {m && <Text color="claude" bold>✻ {m.name}</Text>}
               {m?.effort && <Text dimColor italic> · {m.effort}</Text>}
             </Box>
