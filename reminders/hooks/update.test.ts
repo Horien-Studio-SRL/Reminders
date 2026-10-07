@@ -20,8 +20,8 @@ test('/todos --update refreshes the marketplace, then updates the plugin', async
   const r = await $.command.run({ command: 'todos', args: '--update' })
 
   expect(ran).toEqual([
-    'claude plugin marketplace update horien-reminders',
-    'claude plugin update reminders@horien-reminders',
+    'claude plugin marketplace update noash-tools',
+    'claude plugin update reminders@noash-tools',
   ])
   expect(r.text).toContain('Updated to 0.3.0')
 })
@@ -32,6 +32,6 @@ test('/todos --update stops when the marketplace refresh fails', async ($, on) =
   const r = await $.command.run({ command: 'todos', args: 'update' })
 
   expect(ran).toHaveLength(1)
-  expect(r.text).toContain('Could not refresh the horien-reminders marketplace')
+  expect(r.text).toContain('Could not refresh the noash-tools marketplace')
   expect(r.text).toContain('network down')
 })

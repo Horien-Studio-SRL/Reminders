@@ -325,7 +325,7 @@ const explain = async ($: EngineInterface, t: Todo) =>
 }
 
 // The marketplace this plugin is published in.
-const MARKETPLACE = 'horien-reminders'
+const MARKETPLACE = 'noash-tools'
 
 // `/todos --update`: refresh the marketplace, then update the installed copy, the two `claude plugin`
 // commands a person would run. The CLI picks the install's scope; a new version loads on restart.

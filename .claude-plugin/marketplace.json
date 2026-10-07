@@ -1,6 +1,9 @@
 {
-  "name": "horien-reminders",
-  "owner": { "name": "Horien Studio" },
-  "description": "Claude records unfinished work in Docs/todos.md.",
-  "plugins": [{ "name": "reminders", "source": "./" }]
+  "name": "noash-tools",
+  "owner": { "name": "Noash" },
+  "description": "Claude Code mods I use every day.",
+  "plugins": [
+    { "name": "reminders", "source": "./reminders" },
+    { "name": "context-meter", "source": "./context-meter" }
+  ]
 }
