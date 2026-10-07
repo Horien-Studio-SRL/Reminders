@@ -55,6 +55,18 @@ for (const surface of SURFACES)
     expect(await ui.find({ text: 'engine' })).toBeDefined()
   })
 
+  test(`another mod's drawing in the band stays, the line under it (${surface})`, async ($, on) =>
+  {
+    on('fs.exists', () => ({ value: true }))
+    on('fs.read', () => ({ value: seeded() }))
+    on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'meter: 42% used' }))
+    const ui = await mount($, surface)
+    const meter = await ui.find({ text: /meter: 42% used/ })
+    const line = await ui.find({ text: /Todos: 3 open/ })
+    expect(meter).toBeDefined()
+    expect(line).toBeDefined()
+  })
+
   test(`showHeader off hides the line (${surface})`, { options: { showHeader: false } }, async ($, on) =>
   {
     fakeDisk(on, seeded())

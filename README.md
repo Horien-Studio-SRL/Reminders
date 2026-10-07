@@ -83,7 +83,7 @@ You can also use the Add button in the pane, or tell Claude "add a reminder: ...
 > _
 ```
 
-The line sits at the top right of the prompt, with the blocking count in red. It updates whenever a reminder is added, finished or moved, and hides itself when nothing is open. Before a project has any reminders, it reads `No reminders yet · /todos --scan collects the TODOs in the code`.
+The line sits at the top right of the prompt, with the blocking count in red. If another mod draws there too, such as a usage meter, its drawing stays and the line goes under it. It updates whenever a reminder is added, finished or moved, and hides itself when nothing is open. Before a project has any reminders, it reads `No reminders yet · /todos --scan collects the TODOs in the code`.
 
 Turn it off with `/todos --header off`, or with the "Reminders line above the prompt" setting in `/config`.
 
@@ -93,26 +93,33 @@ Turn it off with `/todos --header off`, or with the "Reminders line above the pr
   Todos [Add]                         6 open · 2 blocking
 
   ▾ P1 Blocking 2
-› [Done] Checkout crashes when the cart is empty.   [Ask]
-    [P1] src/checkout/order.ts:42                      1d
-  [Done] Retry limit has no value.                  [Ask]
-    [P1] src/net/retry.ts:42 · file missing            5w
+› [Done] Checkout crashes when the cart is empty.   [?] [Ask]
+    [P1] src/checkout/order.ts:42                          1d
+         The total divides by the item count before the
+         empty-cart check. Start at order.ts:42.
+  [Done] Retry limit has no value.                  [?] [Ask]
+    [P1] src/net/retry.ts:42 · file missing                5w
 
   ▸ P3 Polish 4
 
   ▾ Recently done
   [Undo] Login redirect loops on expired session.   today
 
-  ↑↓ move · Enter press · Esc close
+  ↑↓ item · Tab button · Enter press · Esc close
 ```
 
 Open reminders are grouped by priority. Each shows its text, the file it points at, and how long ago it was recorded.
 
-↑↓ (or Tab and Shift+Tab) move between buttons, and `›` marks the line holding the focus. Enter presses the highlighted button, Esc closes the pane.
+| Key | What it does |
+| --- | --- |
+| ↑ ↓ | Move between lines: the title, section headers, reminders and done items. On a reminder, the focus stays in the same column ([Done], [P#], [?] or [Ask]). |
+| Tab, Shift+Tab | Move between the buttons of the focused reminder: [Done], [P#], [?], [Ask], wrapping. |
+| Enter | Presses the focused button. |
+| Esc | Closes the pane. |
 
-← and → do nothing in the pane: Claude Code binds them in no plugin pane, so they reach the prompt underneath.
+`›` marks the line holding the focus. In the Ask and Add fields, ↑↓ and Tab leave the field as usual.
 
-Optionally, to keep them from reaching the prompt, have them step between buttons like Shift+Tab and Tab by adding this to `~/.claude/keybindings.json`. It applies to every plugin's pane, and at the end of the list it steps onto Claude Code's own pane tabs and close mark:
+← and → do nothing in the pane: Claude Code doesn't let plugins bind them, so they reach the prompt underneath. To use them like Shift+Tab and Tab, add this to `~/.claude/keybindings.json`. It applies to every plugin's pane:
 
 ```json
 {
@@ -130,6 +137,7 @@ If the file already has a `bindings` list, add the `Pane` entry to it.
 | **Done** | Marks the reminder finished and moves it to the Done section of the file. |
 | **P1 / P2 / P3** | Steps the reminder to the next priority and moves it to that section. |
 | **Undo** | Puts a done reminder back where it was, with its priority, date and pointer. The pane lists the last 3 done; to undo an older one, ask Claude. |
+| **?** | Explains the reminder in one or two sentences under it, in italics: what is unfinished and where to start. It takes at most 3 lines. A small, fast model (Haiku) writes it from the reminder and the 40 lines of code around its pointer only, so it costs little and adds nothing to your conversation with Claude. The explanation is kept for the session; press ? again to hide or show it. |
 | **Ask** | Hands the reminder to Claude. A field opens under it: type how you want it done, or leave it empty to let Claude choose. Enter sends it, and Claude marks the reminder done when the work is finished. Press Ask again to close the field. |
 | **Add** | Opens a field under the title for a rough note. Enter sends it to Claude, which words and records it, like `/todos add`. |
 
@@ -171,6 +179,7 @@ Rough figures (a token is about 4 characters of English):
 | Recording a reminder | Each reminder | about 100 |
 | Listing reminders | When you ask Claude about open work | about 25 per open reminder |
 | The note after Claude edits a file a reminder points at | Once per reminder per session | about 50, plus 20 per reminder |
+| The ? button | The first press on a reminder in a session, on Haiku, outside the conversation | about 700 in, at most 100 out |
 | Ask, Add, `/todos add <note>` | Each time | about 100, plus the code Claude reads to do or record the work |
 | `/todos --scan` | Only when you run it | from about 10,000 in a small project to 100,000 or more in a large one |
 

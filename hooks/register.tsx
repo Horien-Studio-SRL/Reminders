@@ -20,14 +20,17 @@ const RECENT = 3
 
 // Columns the left side of a row holds: the focus mark and "[Done]", the priority button under it.
 const LEFT = 8
-// Columns the right side of a row holds: a gap, then "[Ask]" or the age ("today", "11mo").
-const RIGHT = 6
+// Columns the right side of a row holds: a gap, then "[?] [Ask]" above the age ("today", "11mo").
+const RIGHT = 10
+// Columns a done item's age holds, after a gap.
+const AGE = 6
 // Days after which an item's age is drawn in the warning color.
 const OLD_DAYS = 30
 
 const rowKey = (t: Todo) => `done:${t.text}`
 const prioKey = (t: Todo) => `prio:${t.text}`
 const askKey = (t: Todo) => `ask:${t.text}`
+const whyKey = (t: Todo) => `why:${t.text}`
 const howKey = (t: Todo) => `how:${t.text}`
 const undoKey = (t: Todo) => `undo:${t.text}`
 const foldKey = (section: string) => `fold:${section}`
@@ -36,10 +39,21 @@ const NOTE = 'add:note'
 
 // The button the focus ring is on; the row around it is drawn highlighted.
 let focused: string | undefined
+// The pane's buttons and fields as last drawn, one array per line: the title, a section header, an item's
+// [Done] [P#] [?] [Ask], its Ask field, a done item. ↑↓ move between lines, Tab and Shift+Tab along one.
+let lines: string[][] = []
+// The place on a line ↑↓ keep: 0 [Done], 1 [P#], 2 [?], 3 [Ask]; a one-button line leaves it as it was.
+let column = 0
 // The item whose Ask was pressed; its row shows the field for how Claude should do it.
 let asking: string | undefined
 // Whether Add was pressed; the header shows the field for the person's note. Never open with `asking`.
 let adding = false
+// The item whose [?] was pressed; its row shows the explanation under it.
+let explaining: string | undefined
+// Explanations this session, by item text: the reply, or undefined while it is being written.
+const explained = new Map<string, string | undefined>()
+// The pane's width as last drawn, to count the rows an explanation wraps to.
+let width = 60
 // Sections folded in the pane (P1, P2, P3, done), kept in $.store across sessions.
 let folded: Set<string> | undefined
 // Reminders already pointed out to Claude this session, so each edit to their file doesn't repeat them.
@@ -71,11 +85,31 @@ const getFolded = async ($: EngineInterface) =>
   return (folded ??= new Set(Array.isArray(kept) ? kept.filter(x => typeof x === 'string') : []))
 }
 
+// Rows an explanation may take under its item, so the list stays short.
+const EXPLANATION_ROWS = 3
+
+// An explanation as drawn: one paragraph cut to EXPLANATION_ROWS rows beside the left column, at the last
+// sentence that fits, else with an ellipsis.
+export const clampExplanation = (text: string, columns: number) =>
+{
+  const flat = text.replace(/\s+/g, ' ').trim()
+  const room = Math.max(20, columns - LEFT - 1) * EXPLANATION_ROWS - EXPLANATION_ROWS * 4
+  if (flat.length <= room) return flat
+  const cut = flat.slice(0, room)
+  const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '))
+  return end > room / 2 ? cut.slice(0, end + 1) : `${cut.slice(0, room - 1).trimEnd()}…`
+}
+
+// The rows an explanation takes under its item, wrapped beside the row's left column.
+const explanationRows = (text: string) =>
+  Math.max(1, Math.ceil(clampExplanation(text, width).length / Math.max(20, width - LEFT - 1)))
+
 // Rows the pane needs: title, each section's header and the gap above it, two lines per item in an
-// unfolded section, the Ask or Add field, footer.
+// unfolded section, the Ask or Add field, an open explanation, footer.
 const paneRows = (open: Todo[], recent: Todo[], fold: Set<string>) =>
 {
   let rows = 1 + 1 + 2
+  if (explaining !== undefined) rows += explanationRows(explained.get(explaining) ?? 'Explaining...')
   for (const g of GROUPS)
   {
     const n = open.filter(t => t.priority === g.priority).length
@@ -84,6 +118,25 @@ const paneRows = (open: Todo[], recent: Todo[], fold: Set<string>) =>
   if (recent.length) rows += 2 + (fold.has('done') ? 0 : recent.length)
   return Math.max(4, rows)
 }
+
+// Where ↑ (`by` -1) or ↓ (1) takes the focus from `at`: the line above or below, wrapping, at `column` or the
+// last button short of it; from nothing, the first or the last line.
+export const vertical = (lines: string[][], at: string | undefined, by: number, column: number) =>
+{
+  const i = at === undefined ? -1 : lines.findIndex(l => l.includes(at))
+  const line = lines[i < 0 ? (by > 0 ? 0 : lines.length - 1) : (i + by + lines.length) % lines.length]
+  return line[Math.min(column, line.length - 1)]
+}
+
+// Where Tab (`by` 1) or Shift+Tab (-1) takes the focus from `at`: the next or previous button on its line, wrapping.
+export const across = (lines: string[][], at: string, by: number) =>
+{
+  const line = lines.find(l => l.includes(at))
+  return line ? line[(line.indexOf(at) + by + line.length) % line.length] : at
+}
+
+// The Add and Ask fields, where Tab and the arrows keep the engine's meaning.
+const isField = (key: string) => key === NOTE || key.startsWith('how:')
 
 // Repo-relative or absolute, either slash, any case: comparable.
 const norm = (p: string) => p.trim().replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
@@ -116,6 +169,30 @@ export const addPrompt = (note: string, path = PATH) =>
     'Read the code the note concerns to get the exact names and the at pointer, and pick the priority.',
     'Then call add_reminder. Only record it; the work itself waits for later.',
   ].join('\n')
+
+// What [?] asks the small model, kept short: it pays for these words and the code, never the conversation.
+export const EXPLAIN_SYSTEM =
+  'You explain one entry of a project\'s to-do list to its developer. In one or two short sentences, at most 40 '
+  + 'words of plain text, no Markdown: what is unfinished and where to start. Use only what is given; when the code does '
+  + 'not show it, say what to check. Write in the language of the entry.'
+
+// Lines of code [?] sends on each side of the line the pointer names; with no line, the file's first lines.
+const CONTEXT = 20
+
+// The [?] request: the item as recorded, then the numbered code around its pointer when the file is there.
+export const explainPrompt = (t: Todo, code?: string) =>
+{
+  const entry = `Entry (${t.priority}, recorded ${t.date}): "${t.text}"`
+  if (!t.at) return entry
+  if (code === undefined) return `${entry}\nAt ${t.at}: the file is missing.`
+  const line = Number(/^:(\d+)/.exec(t.at.trim().slice(pointerFile(t.at).length))?.[1] ?? 0)
+  const all = code.split(/\r?\n/)
+  const to = Math.min(all.length, line ? line + CONTEXT : CONTEXT * 2)
+  // A line past the file's end, the code having moved since, shows the file's last lines.
+  const from = Math.max(1, Math.min(line ? line - CONTEXT : 1, to - CONTEXT * 2 + 1))
+  const shown = all.slice(from - 1, to).map((l, i) => `${from + i}  ${l.slice(0, 200)}`).join('\n')
+  return `${entry}\nAt ${t.at}. Lines ${from}-${to} of ${pointerFile(t.at)}:\n${shown}`
+}
 
 // Reminders one scan records at most; the rest are listed in Claude's reply.
 const SCAN_LIMIT = 30
@@ -212,6 +289,39 @@ const openPane = async ($: EngineInterface) =>
   const md = await load($)
   const rows = paneRows(parseOpen(md), parseDone(md).slice(0, RECENT), await getFolded($))
   await $.ui.open({ id: PANE, title: 'Todos', focus: true, closeOnEscape: true, rows })
+}
+
+// [?]: shows the item's explanation under it, or hides it. The first press asks the small model with the item
+// and the code around its pointer alone, no conversation, and keeps the reply for the session.
+const explain = async ($: EngineInterface, t: Todo) =>
+{
+  explaining = explaining === t.text ? undefined : t.text
+  if (explaining === undefined || explained.has(t.text))
+  {
+    $.ui.invalidate('ui.render')
+    return openPane($).catch(() => undefined)
+  }
+  explained.set(t.text, undefined)
+  $.ui.invalidate('ui.render')
+  await openPane($).catch(() => undefined)
+  const file = t.at && pointerFile(t.at)
+  const code = file && (await $.fs.exists(file)) ? await $.fs.read(file).catch(() => undefined) : undefined
+  const r = await $.model.complete({
+    model: 'haiku',
+    system: EXPLAIN_SYSTEM,
+    prompt: explainPrompt(t, code),
+    maxTokens: 100,
+    effort: 'low',
+    timeoutMs: 30_000,
+  }).catch((err: unknown) => ({ isAnswered: false as const, reason: String(err) }))
+  if (r.isAnswered) explained.set(t.text, r.text.trim())
+  else explained.delete(t.text)
+  if (!r.isAnswered && explaining === t.text) explaining = undefined
+  if (!r.isAnswered) $.ui.toast(`Could not explain: ${r.reason}`)
+  $.ui.invalidate('ui.render')
+  // Resized to the reply only while the pane is still up: a pane closed meanwhile stays closed.
+  const isUp = await $.ui.panes().then(ps => ps.some(p => p.id === PANE), () => false)
+  if (isUp) await openPane($).catch(() => undefined)
 }
 
 // The marketplace this plugin is published in.
@@ -359,21 +469,56 @@ export const register: Register = (on, options) =>
 
     asking = undefined
     adding = !!note
+    focused = undefined
+    column = 0
+    explaining = undefined
     await openPane($)
     if (adding) await $.ui.focus({ requestId: PANE, key: NOTE }).catch(() => undefined)
     return { text: 'Todos pane opened.' }
   })
 
-  // The marker follows the focus ring. It is set before `next`, which draws the pane with the ring moved,
-  // and put back if the move is refused.
+  // Tab and Shift+Tab step the engine's ring through every button, the last one's next being the engine's own
+  // stops; here they step along the focused line instead, wrapping. In the Add and Ask fields they keep their
+  // meaning. The marker follows: `focused` is set before `next`, which draws the pane, and put back on a refusal.
   on('ui.focus', { requestId: PANE }, async ($, e, next) =>
   {
+    let to = e.element
+    if (e.origin.kind === 'person' && focused !== undefined && !isField(focused))
+    {
+      const ring = lines.flat()
+      const i = ring.indexOf(focused)
+      const by = i < 0 ? 0 : to === ring[i + 1] ? 1 : to === ring[i - 1] ? -1 : 0
+      if (by) to = across(lines, focused, by)
+    }
+    const line = to === undefined ? undefined : lines.find(l => l.includes(to!))
+    if (line && line.length > 1) column = line.indexOf(to!)
+
+    if (to !== e.element)
+    {
+      if (to === focused) return {}
+      // Bound for one of the engine's stops: its move can't be turned onto a button, so the plugin makes its own.
+      if (e.element === undefined)
+      {
+        $.clock.after(0, () => void $.ui.focus({ requestId: PANE, key: to! }).catch(() => undefined))
+        return {}
+      }
+    }
     const was = focused
-    focused = e.element
-    const r = await next(e)
+    focused = to
+    const r = await next(to === e.element ? e : { ...e, element: to })
     if (r.deny) focused = was
     $.ui.invalidate('ui.render')
     return r
+  }).catch(($, e, next) => (next.called ? {} : next(e)))
+
+  // ↑↓ move to the line above or below, keeping the column. The engine raises them as a scroll of one row: the
+  // pane is drawn a row taller than its window so that it always does, and they never reach the ring as Tab
+  // does. The engine scrolls to keep the focus in view. The wheel (it has a pointer) and the page keys scroll.
+  on('ui.scroll', { requestId: PANE }, async ($, e, next) =>
+  {
+    if (e.origin.kind !== 'person' || e.pointer || Math.abs(e.by) !== 1 || !lines.length) return next(e)
+    const r = await $.ui.focus({ requestId: PANE, key: vertical(lines, focused, e.by, column) }).catch(() => ({ deny: 'failed' }))
+    return r.deny ? next(e) : {}
   }).catch(($, e, next) => (next.called ? {} : next(e)))
 
   on('tool.call', { tool: 'mcp__reminders__add_reminder' }, async ($, e) =>
@@ -420,9 +565,11 @@ export const register: Register = (on, options) =>
     const open = exists ? parseOpen(await $.fs.read(path)) : []
     if (exists && !open.length) return next(e)
 
+    // The band holds one tree: another mod's drawing beneath stays, with the line under it.
+    const beneath = await next(e)
     const { Box, Text } = $.ui.resolve(e)
     const blocking = open.filter(t => t.priority === 'P1').length
-    return (
+    const line = (
       <Box key="todos-line" width={e.props.bodyColumns} justifyContent="flex-end">
         {exists ? (
           <Text wrap="truncate-start">
@@ -434,6 +581,13 @@ export const register: Register = (on, options) =>
         ) : (
           <Text dimColor wrap="truncate-start">No reminders yet · /todos --scan collects the TODOs in the code</Text>
         )}
+      </Box>
+    )
+    if (typeof beneath !== 'string' && beneath.type === 'engine') return line
+    return (
+      <Box key="todos-band" flexDirection="column">
+        {beneath}
+        {line}
       </Box>
     )
   })
@@ -451,6 +605,22 @@ export const register: Register = (on, options) =>
     const missing = new Set<string>()
     for (const t of open) if (t.at && !(await $.fs.exists(pointerFile(t.at)))) missing.add(t.text)
     const has = (key: string) => e.props.isFocused && focused === key
+    width = e.props.bodyColumns
+
+    lines = [[ADD], ...(adding ? [[NOTE]] : [])]
+    for (const g of GROUPS)
+    {
+      const items = open.filter(t => t.priority === g.priority)
+      if (!items.length) continue
+      lines.push([foldKey(g.priority)])
+      if (!fold.has(g.priority))
+        for (const t of items) lines.push([rowKey(t), prioKey(t), whyKey(t), askKey(t)], ...(asking === t.text ? [[howKey(t)]] : []))
+    }
+    if (recent.length)
+    {
+      lines.push([foldKey('done')])
+      if (!fold.has('done')) lines.push(...recent.map(t => [undoKey(t)]))
+    }
 
     const markDone = async (t: Todo) =>
     {
@@ -536,10 +706,11 @@ export const register: Register = (on, options) =>
       </Box>
     )
 
-    // [Done] with the priority button under it, right-aligned; the text and pointer; [Ask] above the age.
+    // [Done] with the priority button under it, right-aligned; the text and pointer; [?] [Ask] above the age;
+    // under them the explanation [?] opened, then the Ask field.
     const row = (t: Todo) =>
     {
-      const isFocused = has(rowKey(t)) || has(prioKey(t)) || has(askKey(t)) || has(howKey(t))
+      const isFocused = has(rowKey(t)) || has(prioKey(t)) || has(whyKey(t)) || has(askKey(t)) || has(howKey(t))
       const days = Math.round((Date.parse(now) - Date.parse(t.date)) / 86_400_000)
       return (
         <Box key={`row:${t.text}`} flexDirection="column">
@@ -563,10 +734,21 @@ export const register: Register = (on, options) =>
               )}
             </Box>
             <Box flexDirection="column" alignItems="flex-end" width={RIGHT} flexShrink={0}>
-              <Button key={askKey(t)} label="[Ask]" plain dimColor={!has(askKey(t))} onPress={() => ask(t)} />
+              <Box>
+                <Button key={whyKey(t)} label="[?]" plain dimColor={!has(whyKey(t))} onPress={() => explain($, t)} />
+                <Text> </Text>
+                <Button key={askKey(t)} label="[Ask]" plain dimColor={!has(askKey(t))} onPress={() => ask(t)} />
+              </Box>
               {days >= OLD_DAYS ? <Text color="warning">{age(t.date, now)}</Text> : <Text dimColor>{age(t.date, now)}</Text>}
             </Box>
           </Box>
+          {explaining === t.text && (
+            <Box key={`explanation:${t.text}`} paddingLeft={LEFT + 1}>
+              {explained.get(t.text) === undefined
+                ? <Text dimColor italic>Explaining...</Text>
+                : <Text dimColor italic wrap="wrap">{clampExplanation(explained.get(t.text)!, width)}</Text>}
+            </Box>
+          )}
           {asking === t.text && (
             <Box paddingLeft={LEFT + 1}>
               <Input
@@ -593,15 +775,16 @@ export const register: Register = (on, options) =>
           <Box flexGrow={1} flexShrink={1} paddingLeft={1}>
             <Text dimColor={!isFocused} strikethrough wrap="truncate-end">{t.text}</Text>
           </Box>
-          <Box justifyContent="flex-end" width={RIGHT} flexShrink={0}>
+          <Box justifyContent="flex-end" width={AGE} flexShrink={0}>
             <Text dimColor>{age(t.done!, now)}</Text>
           </Box>
         </Box>
       )
     }
 
+    // At least a row taller than the window, the last row blank, so that ↑↓ always come as a scroll.
     return (
-      <Box flexDirection="column" width={e.props.bodyColumns}>
+      <Box flexDirection="column" width={e.props.bodyColumns} minHeight={e.props.scroll.bodyRows + 1}>
         <Box key="title" flexDirection="row" justifyContent="space-between">
           <Box flexShrink={0}>
             {marker(has(ADD))}
@@ -649,7 +832,7 @@ export const register: Register = (on, options) =>
           </Box>
         )}
         <Box marginTop={1} paddingLeft={2}>
-          <Text dimColor>{e.props.isFocused ? '↑↓ move · Enter press · Esc close' : 'ctrl+x tab to select'}</Text>
+          <Text dimColor>{e.props.isFocused ? '↑↓ item · Tab button · Enter press · Esc close' : 'ctrl+x tab to select'}</Text>
         </Box>
       </Box>
     )

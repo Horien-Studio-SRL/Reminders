@@ -1,6 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
 
+import { across, clampExplanation, explainPrompt, vertical } from './register'
 import { add, age, complete, EMPTY, parseDone, parseOpen } from './todos'
 
 const SURFACES = ['terminal', 'desktop'] as const
@@ -14,12 +15,13 @@ const PROPS = {
 } as const
 
 // Docs/todos.md lives in `file.md`, and every other path exists unless it ends in one `gone` names; the clock reads
-// 2026-10-07. The engine's own pane drawing is a stub.
-const fakeDisk = (on: On, md: string, gone: string[] = []) =>
+// 2026-10-07. A path ending in a key of `code` reads as its text. The engine's own pane drawing is a stub.
+const fakeDisk = (on: On, md: string, gone: string[] = [], code: Record<string, string> = {}) =>
 {
   const file = { md }
-  on('fs.exists', (_$, e) => ({ value: !gone.some(g => e.path.replace(/\\/g, '/').endsWith(g)) }))
-  on('fs.read', () => ({ value: file.md }))
+  const ends = (path: string, end: string) => path.replace(/\\/g, '/').endsWith(end)
+  on('fs.exists', (_$, e) => ({ value: !gone.some(g => ends(e.path, g)) }))
+  on('fs.read', (_$, e) => ({ value: Object.entries(code).find(([end]) => ends(e.path, end))?.[1] ?? file.md }))
   on('fs.write', (_$, e) => ((file.md = e.text), { value: undefined }))
   on('clock.now', () => ({ value: new Date(2026, 9, 7, 12).getTime() }))
   on('ui.render', ($, e) => $.ui.resolve(e).Text({ children: 'engine' }))
@@ -57,7 +59,7 @@ for (const surface of SURFACES)
     expect((await ui.find({ key: 'row:Retry limit undecided' }))?.text).toContain('7d')
     expect((await ui.find({ key: 'row:Retry limit undecided' }))?.text).toContain('src/net/retry.ts:42')
     expect((await ui.find({ text: /3 open · 2 blocking/ }))).toBeDefined()
-    expect(await ui.findAll({ type: 'Button' })).toHaveLength(12)
+    expect(await ui.findAll({ type: 'Button' })).toHaveLength(15)
   })
 
   test(`Done completes that row (${surface})`, async ($, on) =>
@@ -188,16 +190,80 @@ for (const surface of SURFACES)
     on('ui.focus', () => ({}))
     const ui = await $.ui.mount({ plugin: 'reminders', surface, component: 'Pane', requestId: 'todos', props: PROPS })
 
+    await arrowTo($, 'add')
+    expect((await ui.find({ key: 'title' }))?.text).toMatch(/^› Todos/)
+
     await arrowTo($, 'ask:Retry limit undecided')
     expect((await ui.find({ key: 'row:Retry limit undecided' }))?.text).toContain('›')
     expect((await ui.find({ key: 'row:Checkout crashes' }))?.text).not.toContain('›')
+    expect((await ui.find({ key: 'title' }))?.text).not.toContain('›')
 
     await arrowTo($, 'fold:P1')
     expect((await ui.find({ key: 'group:P1' }))?.text).toMatch(/^› ▾ P1/)
     expect((await ui.find({ key: 'row:Retry limit undecided' }))?.text).not.toContain('›')
+  })
 
-    await arrowTo($, 'add')
-    expect((await ui.find({ key: 'title' }))?.text).toMatch(/^› Todos/)
+  test(`Tab and Shift+Tab step along the item's buttons, wrapping (${surface})`, async ($, on) =>
+  {
+    fakeDisk(on, seeded())
+    const landed: (string | undefined)[] = []
+    on('ui.focus', (_$, e) => (landed.push(e.element), {}))
+    const ui = await $.ui.mount({ plugin: 'reminders', surface, component: 'Pane', requestId: 'todos', props: PROPS })
+    // The engine's ring: every button in the order drawn.
+    const ring = (await ui.findAll({ type: 'Button' })).map(b => b.key!)
+    const tab = (from: string, by: number) => arrowTo($, ring[ring.indexOf(from) + by])
+
+    await arrowTo($, 'done:Checkout crashes')
+    await tab('done:Checkout crashes', 1)
+    await tab('prio:Checkout crashes', 1)
+    await tab('why:Checkout crashes', 1)
+    await tab('ask:Checkout crashes', 1)
+    await tab('done:Checkout crashes', -1)
+    expect(landed).toEqual([
+      'done:Checkout crashes', 'prio:Checkout crashes', 'why:Checkout crashes', 'ask:Checkout crashes',
+      'done:Checkout crashes', 'ask:Checkout crashes',
+    ])
+  })
+
+  // The arrows' move onto the next button goes through `step`; the kit can't carry a hook's $.ui.focus.
+  test(`the wheel and the page keys still scroll the pane (${surface})`, async ($, on) =>
+  {
+    fakeDisk(on, seeded())
+    const scrolls: number[] = []
+    on('ui.scroll', (_$, e) => (scrolls.push(e.by), {}))
+    await $.ui.mount({ plugin: 'reminders', surface, component: 'Pane', requestId: 'todos', props: PROPS })
+    const scroll = (by: number, pointer?: object) =>
+      $.ui.scroll({ component: 'Pane', requestId: 'todos', offset: 1, by, bodyRows: 5, contentRows: 20, origin: { kind: 'person' }, pointer } as never)
+
+    await scroll(5)
+    await scroll(1, { row: 0, column: 0 })
+    expect(scrolls).toEqual([5, 1])
+  })
+
+  test(`[?] shows a short explanation from the small model, asked once (${surface})`, async ($, on) =>
+  {
+    fakeDisk(on, seeded(), [], { 'src/net/retry.ts': 'const a = 1\nconst limit = undefined\n' })
+    const asked: { model: string; prompt: string }[] = []
+    on('model.complete', (_$, e) =>
+    {
+      asked.push({ model: e.model, prompt: String(e.prompt) })
+      return { value: { isAnswered: true, text: 'The retry count is unset.', usage: { input_tokens: 600, output_tokens: 20 } } }
+    })
+    on('ui.open', () => ({ value: undefined }))
+    on('ui.panes', () => ({ value: [{ id: 'todos', title: 'Todos', isShown: true, isFocused: true }] }))
+    const ui = await $.ui.mount({ plugin: 'reminders', surface, component: 'Pane', requestId: 'todos', props: PROPS })
+
+    await ui.press({ key: 'why:Retry limit undecided' })
+    expect((await ui.find({ key: 'explanation:Retry limit undecided' }))?.text).toBe('The retry count is unset.')
+    expect(asked).toHaveLength(1)
+    expect(asked[0].model).toBe('haiku')
+    expect(asked[0].prompt).toContain('2  const limit = undefined')
+
+    await ui.press({ key: 'why:Retry limit undecided' })
+    expect(await ui.find({ key: 'explanation:Retry limit undecided' })).toBeUndefined()
+    await ui.press({ key: 'why:Retry limit undecided' })
+    expect((await ui.find({ key: 'explanation:Retry limit undecided' }))?.text).toBe('The retry count is unset.')
+    expect(asked).toHaveLength(1)
   })
 
   test(`empty list (${surface})`, async ($, on) =>
@@ -207,6 +273,46 @@ for (const surface of SURFACES)
     expect(await ui.find({ text: /Nothing open/ })).toBeDefined()
   })
 }
+
+test('↑↓ move between lines keeping the column, Tab along one', async () =>
+{
+  const lines = [['add'], ['fold:P1'], ['done:a', 'prio:a', 'ask:a'], ['done:b', 'prio:b', 'ask:b'], ['undo:c']]
+  expect(vertical(lines, undefined, 1, 0)).toBe('add')
+  expect(vertical(lines, undefined, -1, 0)).toBe('undo:c')
+  expect(vertical(lines, 'ask:a', 1, 2)).toBe('ask:b')
+  expect(vertical(lines, 'fold:P1', 1, 2)).toBe('ask:a')
+  expect(vertical(lines, 'ask:b', 1, 2)).toBe('undo:c')
+  expect(vertical(lines, 'undo:c', 1, 2)).toBe('add')
+  expect(vertical(lines, 'add', -1, 1)).toBe('undo:c')
+  expect(across(lines, 'done:a', 1)).toBe('prio:a')
+  expect(across(lines, 'ask:a', 1)).toBe('done:a')
+  expect(across(lines, 'done:a', -1)).toBe('ask:a')
+  expect(across(lines, 'fold:P1', 1)).toBe('fold:P1')
+})
+
+test('[?] sends the entry and the code around its line, numbered', async () =>
+{
+  const code = Array.from({ length: 100 }, (_, i) => `line ${i + 1}`).join('\n')
+  const t = { priority: 'P1' as const, date: '2026-10-06', text: 'Retry limit undecided', at: 'src/net/retry.ts:50', line: 0 }
+  const p = explainPrompt(t, code)
+  expect(p).toStartWith('Entry (P1, recorded 2026-10-06): "Retry limit undecided"')
+  expect(p).toContain('Lines 30-70 of src/net/retry.ts:')
+  expect(p).toContain('50  line 50')
+  expect(p).not.toContain('line 29')
+  expect(p).not.toContain('line 71')
+  expect(explainPrompt({ ...t, at: undefined })).toBe('Entry (P1, recorded 2026-10-06): "Retry limit undecided"')
+  expect(explainPrompt(t)).toContain('the file is missing')
+})
+
+test('an explanation is drawn as one paragraph of at most 3 rows, cut at a sentence', async () =>
+{
+  expect(clampExplanation('Short.\n\nStill short.', 60)).toBe('Short. Still short.')
+  const long = Array.from({ length: 20 }, (_, i) => `Sentence number ${i + 1} is here.`).join(' ')
+  const cut = clampExplanation(long, 60)
+  expect(cut.length).toBeLessThanOrEqual((60 - 13) * 3)
+  expect(cut).toEndWith('is here.')
+  expect(clampExplanation('x'.repeat(500), 60)).toEndWith('…')
+})
 
 test('age', async () =>
 {
