@@ -1,17 +1,17 @@
 import { expect, test } from 'claude-code/testing'
 
-import { add, complete, DONE_KEEP, EMPTY, parseOpen } from './todos'
+import { add, complete, DONE_KEEP, EMPTY, parseDone, parseOpen, reopen } from './todos'
 
 const item = (text: string, priority: 'P1' | 'P2' | 'P3' = 'P2') => ({ priority, date: '2026-10-07', text })
 
 test('add, sort, dedupe', async () =>
 {
   let md = add(EMPTY, item('Wire refund button', 'P3')).md
-  md = add(md, { ...item('Boss HP undecided', 'P1'), at: 'Assets/Game/Scripts/Boss.cs:42' }).md
+  md = add(md, { ...item('Retry limit undecided', 'P1'), at: 'src/net/fetchWithRetry.ts:42' }).md
   const open = parseOpen(md)
   expect(open.map(t => t.priority)).toEqual(['P1', 'P3'])
-  expect(open[0]?.at).toBe('Assets/Game/Scripts/Boss.cs:42')
-  expect(add(md, item('boss hp UNDECIDED')).error).toBeDefined()
+  expect(open[0]?.at).toBe('src/net/fetchWithRetry.ts:42')
+  expect(add(md, item('retry LIMIT undecided')).error).toBeDefined()
 })
 
 test('hand-written junk survives a rewrite', async () =>
@@ -38,4 +38,26 @@ test('exact text wins over a substring hit', async () =>
 {
   const md = add(add(EMPTY, item('Fix bar')).md, item('Fix bar colors')).md
   expect(complete(md, 'Fix bar', '2026-10-08').done?.text).toBe('Fix bar')
+})
+
+test('reopen puts a done item back as it was', async () =>
+{
+  let md = add(EMPTY, { ...item('Retry limit undecided', 'P1'), at: 'src/net/retry.ts:42' }).md
+  md = add(md, item('Tidy settings page', 'P3')).md
+  md = complete(md, 'retry', '2026-10-08').md
+  expect(parseDone(md)[0]).toMatchObject({ text: 'Retry limit undecided', done: '2026-10-08' })
+
+  md = reopen(md, 'RETRY limit').md
+  expect(parseDone(md)).toEqual([])
+  expect(parseOpen(md)[0]).toMatchObject({ priority: 'P1', date: '2026-10-07', text: 'Retry limit undecided', at: 'src/net/retry.ts:42' })
+  expect(reopen(md, 'retry').error).toContain('No done reminder')
+})
+
+test('reopen refuses a duplicate of an open item', async () =>
+{
+  let md = complete(add(EMPTY, item('Fix bar')).md, 'Fix bar', '2026-10-08').md
+  md = add(md, item('Fix bar')).md
+  const r = reopen(md, 'Fix bar')
+  expect(r.error).toBeDefined()
+  expect(r.md).toBe(md)
 })

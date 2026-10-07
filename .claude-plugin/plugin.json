@@ -1,1 +1,1 @@
-{ "name": "reminders", "version": "0.1.0", "description": "Claude records unfinished work in Docs/todos.md; /todos shows the open list.", "author": { "name": "Noash" }, "license": "MIT" }
+{ "name": "reminders", "version": "0.2.0", "description": "Claude records unfinished work in Docs/todos.md; /todos shows the open list.", "author": { "name": "Noash" }, "license": "MIT" }
