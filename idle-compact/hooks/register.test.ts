@@ -5,11 +5,13 @@ type Engine = Parameters<TestBody>[0]
 type On = Parameters<TestBody>[1]
 
 // the engine beneath the plugin: a context of `tokens`, compactions counted
-const engine = (on: On, tokens: number) => {
+const engine = (on: On, tokens: number | undefined, estimate = 0) => {
   const clock = mock.clock(on)
   const compacted: unknown[] = []
   on('session.start', () => ({ cwd: '/' }))
-  on('session.usage', () => ({ value: { startedAt: 0, context: { tokens, window: 200_000, percent: 50 }, rateLimits: [] } }))
+  on('session.usage', (_$, e) => ({
+    value: { startedAt: 0, context: e.breakdown ? { window: 200_000, breakdown: { totalTokens: estimate } as never } : { tokens, window: 200_000 }, rateLimits: [] },
+  }))
   on('session.compact', (_$, e) => {
     compacted.push(e.instructions)
     return { messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never
@@ -71,8 +73,8 @@ test('a prompt on a cold cache is held back, compacted for, and put back in the 
   expect('drop' in (await $.prompt.submit({ text: 'add a retry to the upload', origin: { kind: 'composer' } } as never))).toBe(false)
 })
 
-test('a resumed session takes its cache age from the transcript', async ($, on) => {
-  const { clock, compacted } = engine(on, 150_000)
+test('a resumed session takes its cache age from the transcript and its size from the estimate', async ($, on) => {
+  const { clock, compacted } = engine(on, undefined, 150_000)
   on('prompt.submit', (_$, e) => ({ text: e.text }))
   on('prompt.fill', () => ({ isFilled: true }) as never)
   on('env.get', (_$, e) => ({ value: (e as { name: string }).name === 'USERPROFILE' ? 'C:/Users/me' : undefined }) as never)

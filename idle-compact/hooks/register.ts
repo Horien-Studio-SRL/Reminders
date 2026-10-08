@@ -12,6 +12,10 @@ let minTokens = 120_000
 // when the last main-thread request finished; undefined once compacted, until the next one
 let cachedAt: number | undefined
 
+// A resumed session reports no size until its first reply, so fall back to the engine's local estimate (no API call).
+const contextTokens = async ($: EngineInterface) =>
+  (await $.session.usage()).context.tokens ?? (await $.session.usage({ breakdown: 'summary' })).context.breakdown?.totalTokens ?? 0
+
 // A resumed session has no request in this process yet, so its last reply comes from the transcript.
 // ponytail: reads the whole file once, and assumes the default ~/.claude/projects/<cwd with - for each symbol>/<id>.jsonl
 const lastReplyAt = async ($: EngineInterface) => {
@@ -35,7 +39,7 @@ export const register: Register = on => {
     })
     $.clock.every(60_000, async () => {
       if (!enabled || cachedAt === undefined || (await $.clock.now()) - cachedAt < CACHE_TTL_MS - MARGIN_MS) return
-      const tokens = (await $.session.usage()).context.tokens ?? 0
+      const tokens = await contextTokens($)
       if (tokens < minTokens) return
       cachedAt = undefined
       // rejects while a turn runs; the next idle stretch tries again
@@ -60,7 +64,7 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     if (!enabled || e.turnId !== undefined || e.origin.kind !== 'composer' || e.attachments || e.text.startsWith('/') || cachedAt === undefined) return next(e)
     if ((await $.clock.now()) - cachedAt < CACHE_TTL_MS) return next(e)
-    const tokens = (await $.session.usage()).context.tokens ?? 0
+    const tokens = await contextTokens($)
     if (tokens < minTokens) return next(e)
     cachedAt = undefined
     $.clock.after(0, async () => {
