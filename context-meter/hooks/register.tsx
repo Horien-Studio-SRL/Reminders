@@ -1,10 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage, Timer, TurnStepInput } from 'claude-code'
-import type { ContextMeterUsage } from '../types/index'
+import type { ContextMeterCold, ContextMeterUsage } from '../types/index'
 
 const usageAtom = atom({ plugin: 'context-meter', key: 'usage' } as const, null)
 const modelAtom = atom({ plugin: 'context-meter', key: 'model' } as const, null)
 const cacheAtom = atom({ plugin: 'context-meter', key: 'cache' } as const, null)
+const coldAtom = atom({ plugin: 'context-meter', key: 'cold' } as const, null)
+const COLD_PANE = 'cold-cache'
 // auto-effort rewrites the effort after this mod's turn.step may have seen it, so its pick wins when set
 const autoEffortAtom = atom({ plugin: 'auto-effort', key: 'effort' } as const, null)
 
@@ -12,6 +14,19 @@ const autoEffortAtom = atom({ plugin: 'auto-effort', key: 'effort' } as const, n
 const CACHE_TTL_MS = 60 * 60 * 1000
 // past this, a prompt sent on a cold cache rewrites enough to be worth a warning
 const COLD_WARN_TOKENS = 120_000
+
+// List input price in $/MTok, first prefix match wins. A 1h cache write costs twice that, a plain read once.
+// ponytail: hardcoded list prices, update when they change; managed modelPricing is ignored
+const INPUT_PRICE: [RegExp, number][] = [
+  [/fable|mythos/, 10],
+  [/opus-5-5/, 4],
+  [/opus/, 5],
+  [/sonnet-5/, 2],
+  [/sonnet/, 3],
+  [/haiku-5/, 0.1],
+  [/haiku/, 1],
+]
+const inputPrice = (id: string) => INPUT_PRICE.find(([re]) => re.test(id))?.[1] ?? 4
 
 const LIMIT_LABEL: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' }
 const BAR_CELLS = 8
@@ -63,6 +78,44 @@ let watch: Timer | undefined
 let cachedAt: number | undefined
 let warnedCold = false
 
+// A resumed session has no request in this process yet, so its last reply comes from the transcript.
+// ponytail: same lookup as idle-compact's; assumes ~/.claude/projects/<cwd with - for each symbol>/<id>.jsonl
+const lastReplyAt = async ($: EngineInterface) => {
+  const home = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))}/.claude`
+  const folder = (await $.session.cwd()).replace(/[^a-zA-Z0-9]/g, '-')
+  const lines = (await $.fs.read(`${home}/projects/${folder}/${await $.session.id()}.jsonl`)).split('\n')
+  const last = lines.findLast(line => line.includes('"type":"assistant"'))
+  const at = last === undefined ? NaN : Date.parse((JSON.parse(last) as { timestamp?: string }).timestamp ?? '')
+  return Number.isNaN(at) ? undefined : at
+}
+
+// Opens the cold-cache pane once per cold spell when the next prompt would rewrite a large context.
+// Opened unasked (on resume) the pane needs a wide terminal, so a toast says the same below that.
+const checkCold = async ($: EngineInterface) => {
+  if (warnedCold || cachedAt === undefined) return
+  const idleMs = (await $.clock.now()) - cachedAt
+  const tokens = (await read($, usageAtom))?.tokens ?? 0
+  if (idleMs < CACHE_TTL_MS || tokens < COLD_WARN_TOKENS) return
+  warnedCold = true
+  const id = await $.session.model()
+  const price = inputPrice(id)
+  const cold: ContextMeterCold = {
+    tokens,
+    idleMin: Math.round(idleMs / 60_000),
+    model: prettyModel(id),
+    price,
+    rewriteUsd: (tokens * price * 2) / 1e6,
+    compactUsd: (tokens * price) / 1e6,
+  }
+  await update($, coldAtom, () => cold)
+  const opened = await $.ui.open({ id: COLD_PANE, title: 'Cold cache' }).catch(() => undefined)
+  if (!opened?.isPlaced) {
+    $.ui.toast(`Cold cache, ${k(tokens)} context: the next prompt rewrites it for about $${cold.rewriteUsd.toFixed(2)}. /compact first costs about $${cold.compactUsd.toFixed(2)}.`, { timeoutMs: 10_000 })
+  }
+}
+
+const idle = (min: number) => (min >= 120 ? `${Math.floor(min / 60)}h ${min % 60}m` : `${min}m`)
+
 const cacheLeft = async ($: EngineInterface) => {
   if (cachedAt === undefined) return
   const left = Math.max(0, Math.ceil((cachedAt + CACHE_TTL_MS - (await $.clock.now())) / 60_000))
@@ -72,6 +125,7 @@ const cacheLeft = async ($: EngineInterface) => {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
+    cachedAt ??= await lastReplyAt($).catch(() => undefined)
     // clears the status line left by the first version of this mod
     $.ui.status(undefined)
     const id = await $.session.model()
@@ -85,6 +139,7 @@ export const register: Register = on => {
       // keep trying, from the local estimate, until the band has a fill
       if ((await read($, usageAtom))?.tokens === undefined) await refresh($, true).catch(() => undefined)
       await cacheLeft($)
+      await checkCold($)
       const now = await $.session.model()
       if (now === seen) return
       seen = now
@@ -96,16 +151,9 @@ export const register: Register = on => {
     return started
   })
 
-  // The prompt goes out anyway; the toast only says what it will cost.
+  // The prompt goes out anyway; the pane only says what it will cost.
   on('prompt.submit', async ($, e, next) => {
-    if (e.turnId === undefined && !e.text.startsWith('/') && cachedAt !== undefined && !warnedCold) {
-      const cold = (await $.clock.now()) - cachedAt >= CACHE_TTL_MS
-      const tokens = (await read($, usageAtom))?.tokens ?? 0
-      if (cold && tokens >= COLD_WARN_TOKENS) {
-        warnedCold = true
-        $.ui.toast(`The prompt cache is cold and the context is ${k(tokens)}: this prompt rewrites all of it. Next time, /compact or /clear first.`, { timeoutMs: 10_000 })
-      }
-    }
+    if (e.turnId === undefined && !e.text.startsWith('/')) await checkCold($)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -126,6 +174,7 @@ export const register: Register = on => {
     if (u && total > 0) {
       cachedAt = await $.clock.now()
       warnedCold = false
+      await update($, coldAtom, () => null)
       await update($, cacheAtom, () => ({ hit: Math.round((u.cache_read_input_tokens / total) * 100), left: CACHE_TTL_MS / 60_000 }))
     }
     return result
@@ -133,8 +182,46 @@ export const register: Register = on => {
 
   on('session.compact', async ($, e, next) => {
     const result = await next(e)
-    if (e.agentId === undefined && !('skip' in result)) $.clock.after(1000, () => void refresh($, true))
+    if (e.agentId !== undefined || 'skip' in result) return result
+    $.clock.after(1000, () => void refresh($, true))
+    // whoever compacted (idle-compact, /compact, the pane's button), the pane's choice is made
+    await update($, coldAtom, () => null)
+    await $.ui.close({ id: COLD_PANE }).catch(() => undefined)
     return result
+  })
+
+  on('ui.render', { component: 'Pane', requestId: COLD_PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const c = await read($, coldAtom)
+    if (c === null) return <Text dimColor>The cache is warm again.</Text>
+    const row = (label: string, value: string, color?: string) => (
+      <Box key={label}>
+        <Text dimColor>{label.padEnd(16)}</Text>
+        <Text color={color} bold={color !== undefined}>{value}</Text>
+      </Box>
+    )
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor="warning" paddingX={1}>
+        <Text color="warning" bold>❄ The prompt cache has expired</Text>
+        <Text dimColor>Idle {idle(c.idleMin)}, past the 60m cache lifetime.</Text>
+        <Box flexDirection="column" marginY={1}>
+          {row('Context', `${k(c.tokens)} tokens`)}
+          {row('Model', `${c.model} · $${c.price}/MTok in`)}
+          {row('Send as is', `~$${c.rewriteUsd.toFixed(2)}`, 'error')}
+          {row('/compact first', `~$${c.compactUsd.toFixed(2)} + a small rewrite`, 'success')}
+          {row('/clear', '$0', 'success')}
+        </Box>
+        <Text dimColor italic>List prices; a subscription bills usage limits, not dollars.</Text>
+        <Box marginTop={1}>
+          <Button hotkey="c" variant="primary" onPress={async () => {
+            await $.ui.close({ id: COLD_PANE })
+            await $.session.compact({}).catch(() => $.ui.toast('Compaction failed; run /compact.'))
+          }}>Compact now</Button>
+          <Text> </Text>
+          <Button hotkey="x" onPress={() => $.ui.close({ id: COLD_PANE })}>Send as is</Button>
+        </Box>
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

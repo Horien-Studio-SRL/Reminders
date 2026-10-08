@@ -124,10 +124,11 @@ test('the cache shows its hit rate and minutes left, then goes cold', async ($, 
   expect((await bandText($))[1]).toEqual('$0.50 │ cache cold │ ✻ Opus 5.5 · high')
 })
 
-test('a prompt on a cold cache with a large context warns once', async ($, on) => {
+test('a prompt on a cold cache with a large context warns once, by toast on a narrow terminal', async ($, on) => {
   const clock = mock.clock(on)
   usage(on)
   coreBand(on)
+  on('ui.open', () => ({ value: { isPlaced: false, reason: 'narrow' } }) as never)
   const toasts: string[] = []
   on('session.start', () => ({ cwd: '/' }))
   on('ui.status', () => ({ value: undefined }))
@@ -150,7 +151,7 @@ test('a prompt on a cold cache with a large context warns once', async ($, on) =
   await clock.advance(60 * 60_000)
   await $.prompt.submit({ text: 'back from lunch' })
   await $.prompt.submit({ text: 'again' })
-  expect(toasts).toEqual(['The prompt cache is cold and the context is 150k: this prompt rewrites all of it. Next time, /compact or /clear first.'])
+  expect(toasts).toEqual(['Cold cache, 150k context: the next prompt rewrites it for about $1.20. /compact first costs about $0.60.'])
 })
 
 test('a resumed session whose first usage read fails still shows the band', async ($, on) => {
@@ -169,4 +170,62 @@ test('a resumed session whose first usage read fails still shows the band', asyn
   await $.session.start({ cwd: '/' } as never)
   await clock.advance(1000)
   expect((await bandText($))[0]).toBe('▰▰▱▱▱▱▱▱ ~30% 60k/200k')
+})
+
+test('a resumed session idle past the cache lifetime opens the cold-cache pane with the cost', async ($, on) => {
+  const clock = mock.clock(on)
+  usage(on)
+  coreBand(on)
+  const opened: string[] = []
+  on('session.start', () => ({ cwd: '/' }))
+  on('ui.status', () => ({ value: undefined }))
+  on('ui.open', (_$, e) => {
+    opened.push((e as { id: string }).id)
+    return { value: { isPlaced: true } } as never
+  })
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('settings.read', () => ({ value: {} }))
+  on('session.cwd', () => ({ value: '/' }) as never)
+  on('session.id', () => ({ value: 'abc' }) as never)
+  on('env.get', () => ({ value: '/home' }) as never)
+  on('fs.read', () => ({ value: JSON.stringify({ type: 'assistant', timestamp: new Date(0).toISOString() }) }) as never)
+
+  await clock.advance(3 * 60 * 60_000)
+  await $.session.start({ cwd: '/' } as never)
+  await clock.advance(1000)
+  expect(opened).toEqual(['cold-cache'])
+
+  const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'terminal', component: 'Pane', requestId: 'cold-cache', props: {}, viewport: { columns: 80, rows: 30 } } as never)
+  const text = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('\n')
+  await ui.unmount()
+  expect(text).toContain('Idle 3h 0m')
+  expect(text).toContain('~$1.20')
+  expect(text).toContain('~$0.60')
+})
+
+test('a compaction from anywhere closes the cold-cache pane', async ($, on) => {
+  const clock = mock.clock(on)
+  usage(on)
+  coreBand(on)
+  const closed: string[] = []
+  on('session.start', () => ({ cwd: '/' }))
+  on('ui.status', () => ({ value: undefined }))
+  on('ui.open', () => ({ value: { isPlaced: true } }) as never)
+  on('ui.close', (_$, e) => {
+    closed.push((e as { id: string }).id)
+    return { value: undefined } as never
+  })
+  on('session.compact', () => ({ messages: [{ role: 'user', text: 'summary', toolUses: [] }] as never }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('settings.read', () => ({ value: {} }))
+  on('session.cwd', () => ({ value: '/' }) as never)
+  on('session.id', () => ({ value: 'abc' }) as never)
+  on('env.get', () => ({ value: '/home' }) as never)
+  on('fs.read', () => ({ value: JSON.stringify({ type: 'assistant', timestamp: new Date(0).toISOString() }) }) as never)
+
+  await clock.advance(3 * 60 * 60_000)
+  await $.session.start({ cwd: '/' } as never)
+  await clock.advance(1000)
+  await $.session.compact({ trigger: 'auto', messages: [{ role: 'user', text: 'hi', toolUses: [] }] } as never)
+  expect(closed).toEqual(['cold-cache'])
 })
