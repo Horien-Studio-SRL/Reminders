@@ -152,3 +152,21 @@ test('a prompt on a cold cache with a large context warns once', async ($, on) =
   await $.prompt.submit({ text: 'again' })
   expect(toasts).toEqual(['The prompt cache is cold and the context is 150k: this prompt rewrites all of it. Next time, /compact or /clear first.'])
 })
+
+test('a resumed session whose first usage read fails still shows the band', async ($, on) => {
+  const clock = mock.clock(on)
+  coreBand(on)
+  let calls = 0
+  on('session.usage', (_$, e) => {
+    if (calls++ === 0) throw new Error('still loading')
+    return { value: { startedAt: 0, context: e.breakdown ? { window: 200_000, breakdown: { totalTokens: 60_000 } as never } : { window: 200_000 }, rateLimits: [] } }
+  })
+  on('session.start', () => ({ cwd: '/' }))
+  on('ui.status', () => ({ value: undefined }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('settings.read', () => ({ value: {} }))
+
+  await $.session.start({ cwd: '/' } as never)
+  await clock.advance(1000)
+  expect((await bandText($))[0]).toBe('▰▰▱▱▱▱▱▱ ~30% 60k/200k')
+})

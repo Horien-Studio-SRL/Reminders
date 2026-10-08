@@ -77,11 +77,13 @@ export const register: Register = on => {
     const id = await $.session.model()
     const effort = await effortFromSettings($, id)
     await update($, modelAtom, prev => prev ?? model(id, effort))
-    await refresh($)
     // /model fires no event, so poll; turn.step still supplies the effort of live calls
     seen = id
     watch?.cancel()
     watch = $.clock.every(1000, async () => {
+      // a resumed session has no response of its own yet, and its first read can fail while it loads:
+      // keep trying, from the local estimate, until the band has a fill
+      if ((await read($, usageAtom))?.tokens === undefined) await refresh($, true).catch(() => undefined)
       await cacheLeft($)
       const now = await $.session.model()
       if (now === seen) return
@@ -90,6 +92,7 @@ export const register: Register = on => {
       const level = await effortFromSettings($, now)
       if (level && seen === now) await update($, modelAtom, () => model(now, level))
     })
+    await refresh($).catch(() => undefined)
     return started
   })
 

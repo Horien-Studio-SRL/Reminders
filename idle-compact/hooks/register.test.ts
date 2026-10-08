@@ -70,3 +70,24 @@ test('a prompt on a cold cache is held back, compacted for, and put back in the 
   expect(filled).toEqual(['add a retry to the upload'])
   expect('drop' in (await $.prompt.submit({ text: 'add a retry to the upload', origin: { kind: 'composer' } } as never))).toBe(false)
 })
+
+test('a resumed session takes its cache age from the transcript', async ($, on) => {
+  const { clock, compacted } = engine(on, 150_000)
+  on('prompt.submit', (_$, e) => ({ text: e.text }))
+  on('prompt.fill', () => ({ isFilled: true }) as never)
+  on('env.get', (_$, e) => ({ value: (e as { name: string }).name === 'USERPROFILE' ? 'C:/Users/me' : undefined }) as never)
+  on('session.cwd', () => ({ value: 'C:\\work\\app' }) as never)
+  on('session.id', () => ({ value: 's1' }) as never)
+  const reads: string[] = []
+  on('fs.read', (_$, e) => {
+    reads.push((e as { path: string }).path.replace(/\\/g, '/'))
+    const line = (type: string) => JSON.stringify({ type, timestamp: new Date(0).toISOString() })
+    return { value: `${line('user')}\n${line('assistant')}\n` } as never
+  })
+  await $.command.run({ command: 'idle-compact', args: 'on' })
+  await $.session.start({ cwd: '/' } as never)
+  expect(reads).toEqual(['C:/Users/me/.claude/projects/C--work-app/s1.jsonl'])
+  // the last reply was at 0, so the timer finds the cache at its end and compacts
+  await clock.advance(61 * 60_000)
+  expect(compacted.length).toBe(1)
+})

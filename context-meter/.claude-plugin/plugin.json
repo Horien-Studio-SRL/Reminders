@@ -1,6 +1,6 @@
 {
   "name": "context-meter",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Band above the prompt with model, effort, context fill, rate-limit windows and session cost, cache state",
   "author": {
     "name": "Noash"

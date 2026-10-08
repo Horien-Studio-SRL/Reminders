@@ -16,7 +16,7 @@ If your computer slept or Claude Code wasn't running, the cache can expire witho
 
 This costs more than compacting before expiry, because the summary reads the context at the full input price, but still about half of sending the prompt as it was. Claude Code doesn't allow a mod to compact while a prompt is on its way, so holding it back is the only way to do this. Prompts with images attached are sent as they are, since the box can't hold the images.
 
-A resumed session (`claude --resume`) isn't covered: the mod can't tell how old its cache is until the first reply.
+A resumed session (`claude --resume`, or a restart) works out its cache age from the last reply in its transcript, so both the timer and the fallback cover it. The mod reads the transcript once at startup, from the default place under `~/.claude/projects`.
 
 The trade-off: a compaction loses detail. If you come back to a task in the middle, Claude may need to re-read a file or two. Raise the threshold or turn the mod off if that costs more than it saves.
 

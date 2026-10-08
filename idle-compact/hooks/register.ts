@@ -1,4 +1,4 @@
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 // ponytail: assumes the 1-hour TTL Claude Code uses on subscriptions, like context-meter
 const CACHE_TTL_MS = 60 * 60 * 1000
@@ -10,12 +10,24 @@ const forPrompt = (text: string) => `${INSTRUCTIONS} Above all, keep what the ne
 let enabled = true
 let minTokens = 120_000
 // when the last main-thread request finished; undefined once compacted, until the next one
-// ponytail: a resumed session has no step yet, so its cache age is unknown and neither path compacts it
 let cachedAt: number | undefined
+
+// A resumed session has no request in this process yet, so its last reply comes from the transcript.
+// ponytail: reads the whole file once, and assumes the default ~/.claude/projects/<cwd with - for each symbol>/<id>.jsonl
+const lastReplyAt = async ($: EngineInterface) => {
+  const home = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))}/.claude`
+  const folder = (await $.session.cwd()).replace(/[^a-zA-Z0-9]/g, '-')
+  const lines = (await $.fs.read(`${home}/projects/${folder}/${await $.session.id()}.jsonl`)).split('\n')
+  const last = lines.findLast(line => line.includes('"type":"assistant"'))
+  const at = last === undefined ? NaN : Date.parse((JSON.parse(last) as { timestamp?: string }).timestamp ?? '')
+  return Number.isNaN(at) ? undefined : at
+}
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
+    const at = await lastReplyAt($).catch(() => undefined)
+    cachedAt ??= at
     await $.command.register({
       name: 'idle-compact',
       description: 'Show or set compaction of idle sessions before the cache expires: on, off, or a minimum context in thousands of tokens',
