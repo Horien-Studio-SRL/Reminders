@@ -21,7 +21,11 @@ const bandText = async ($: Engine) => {
 }
 
 // what the engine draws under the plugins when nothing else claims the band
-const coreBand = (on: On) => on('ui.render', () => ({ type: 'Box' }) as never)
+// also the session id, by default a fresh one with no transcript on disk
+const coreBand = (on: On, id = 'fresh') => {
+  on('session.id', () => ({ value: id }) as never)
+  on('ui.render', () => ({ type: 'Box' }) as never)
+}
 
 const usage = (on: On) =>
   on('session.usage', (_$, e) => ({
@@ -175,7 +179,7 @@ test('a resumed session whose first usage read fails still shows the band', asyn
 test('a resumed session idle past the cache lifetime opens the cold-cache pane with the cost', async ($, on) => {
   const clock = mock.clock(on)
   usage(on)
-  coreBand(on)
+  coreBand(on, 'abc')
   const opened: string[] = []
   on('session.start', () => ({ cwd: '/' }))
   on('ui.status', () => ({ value: undefined }))
@@ -186,7 +190,6 @@ test('a resumed session idle past the cache lifetime opens the cold-cache pane w
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('settings.read', () => ({ value: {} }))
   on('session.cwd', () => ({ value: '/' }) as never)
-  on('session.id', () => ({ value: 'abc' }) as never)
   on('env.get', () => ({ value: '/home' }) as never)
   on('fs.read', () => ({ value: JSON.stringify({ type: 'assistant', timestamp: new Date(0).toISOString() }) }) as never)
 
@@ -206,7 +209,7 @@ test('a resumed session idle past the cache lifetime opens the cold-cache pane w
 test('a compaction from anywhere closes the cold-cache pane', async ($, on) => {
   const clock = mock.clock(on)
   usage(on)
-  coreBand(on)
+  coreBand(on, 'abc')
   const closed: string[] = []
   on('session.start', () => ({ cwd: '/' }))
   on('ui.status', () => ({ value: undefined }))
@@ -219,7 +222,6 @@ test('a compaction from anywhere closes the cold-cache pane', async ($, on) => {
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('settings.read', () => ({ value: {} }))
   on('session.cwd', () => ({ value: '/' }) as never)
-  on('session.id', () => ({ value: 'abc' }) as never)
   on('env.get', () => ({ value: '/home' }) as never)
   on('fs.read', () => ({ value: JSON.stringify({ type: 'assistant', timestamp: new Date(0).toISOString() }) }) as never)
 

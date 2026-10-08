@@ -22,7 +22,7 @@ The trade-off: a compaction loses detail. If you come back to a task in the midd
 
 ## Commands
 
-- `/idle-compact` shows the current setting
+- `/idle-compact` shows the setting and what the mod sees now: the context size, how long ago the last reply was, and where the last prompt came from
 - `/idle-compact off` and `/idle-compact on` turn it off and back on for the session
 - `/idle-compact 120k` sets the minimum context size for this session
 

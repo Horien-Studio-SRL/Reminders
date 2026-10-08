@@ -11,6 +11,10 @@ let enabled = true
 let minTokens = 120_000
 // when the last main-thread request finished; undefined once compacted, until the next one
 let cachedAt: number | undefined
+// the session cachedAt belongs to: a resume (from the picker too) swaps it without a session.start
+let knownFor: string | undefined
+// what the last prompt was, for /idle-compact to report
+let lastPrompt = 'none yet'
 
 // A resumed session reports no size until its first reply, so fall back to the engine's local estimate (no API call).
 const contextTokens = async ($: EngineInterface) =>
@@ -18,27 +22,39 @@ const contextTokens = async ($: EngineInterface) =>
 
 // A resumed session has no request in this process yet, so its last reply comes from the transcript.
 // ponytail: reads the whole file once, and assumes the default ~/.claude/projects/<cwd with - for each symbol>/<id>.jsonl
-const lastReplyAt = async ($: EngineInterface) => {
+const lastReplyAt = async ($: EngineInterface, id: string) => {
   const home = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))}/.claude`
   const folder = (await $.session.cwd()).replace(/[^a-zA-Z0-9]/g, '-')
-  const lines = (await $.fs.read(`${home}/projects/${folder}/${await $.session.id()}.jsonl`)).split('\n')
+  const lines = (await $.fs.read(`${home}/projects/${folder}/${id}.jsonl`)).split('\n')
   const last = lines.findLast(line => line.includes('"type":"assistant"'))
   const at = last === undefined ? NaN : Date.parse((JSON.parse(last) as { timestamp?: string }).timestamp ?? '')
   return Number.isNaN(at) ? undefined : at
 }
 
+// Reads the transcript once per session id, and only when this process has no request of its own for it.
+const cacheAge = async ($: EngineInterface) => {
+  const id = await $.session.id()
+  if (id !== knownFor) {
+    knownFor = id
+    cachedAt = await lastReplyAt($, id).catch(() => undefined)
+  }
+  return cachedAt === undefined ? undefined : (await $.clock.now()) - cachedAt
+}
+
+const ago = (ms: number) => (ms >= 2 * 3_600_000 ? `${Math.floor(ms / 3_600_000)}h ${Math.round((ms % 3_600_000) / 60_000)}m` : `${Math.round(ms / 60_000)}m`)
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-    const at = await lastReplyAt($).catch(() => undefined)
-    cachedAt ??= at
     await $.command.register({
       name: 'idle-compact',
       description: 'Show or set compaction of idle sessions before the cache expires: on, off, or a minimum context in thousands of tokens',
       argumentHint: '[on | off | <k tokens>]',
     })
     $.clock.every(60_000, async () => {
-      if (!enabled || cachedAt === undefined || (await $.clock.now()) - cachedAt < CACHE_TTL_MS - MARGIN_MS) return
+      if (!enabled) return
+      const age = await cacheAge($)
+      if (age === undefined || age < CACHE_TTL_MS - MARGIN_MS) return
       const tokens = await contextTokens($)
       if (tokens < minTokens) return
       cachedAt = undefined
@@ -54,7 +70,11 @@ export const register: Register = on => {
     if (arg === 'on' || arg === 'off') enabled = arg === 'on'
     else if (/^\d+$/.test(arg)) minTokens = Number(arg) * 1000
     else if (arg) return { text: `Unknown argument "${arg}". Use on, off or a number of thousands of tokens.` }
-    return { text: enabled ? `idle-compact is on for contexts of ${minTokens / 1000}k tokens or more.` : 'idle-compact is off.' }
+    if (!enabled) return { text: 'idle-compact is off.' }
+    const age = await cacheAge($)
+    const tokens = Math.round((await contextTokens($)) / 1000)
+    const last = age === undefined ? 'no reply on record (or already compacted)' : `last reply ${ago(age)} ago`
+    return { text: `idle-compact is on for contexts of ${minTokens / 1000}k tokens or more. Now: ${tokens}k context, ${last}. Last prompt: ${lastPrompt}.` }
   })
 
   // The fallback, for when the timer never fired (the computer slept): the cache is already cold, so the
@@ -62,8 +82,12 @@ export const register: Register = on => {
   // The engine refuses a compaction under a prompt.submit hook, so the prompt is dropped, the session
   // compacts, and the prompt goes back in the box for one Enter.
   on('prompt.submit', async ($, e, next) => {
-    if (!enabled || e.turnId !== undefined || e.origin.kind !== 'composer' || e.attachments || e.text.startsWith('/') || cachedAt === undefined) return next(e)
-    if ((await $.clock.now()) - cachedAt < CACHE_TTL_MS) return next(e)
+    if (!e.text.startsWith('/')) lastPrompt = `${e.origin.kind}${e.turnId === undefined ? '' : ', mid-turn'}`
+    // typed at the terminal or on a remote surface; notifications, triggers and SDK calls go through
+    const typed = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+    if (!enabled || e.turnId !== undefined || !typed || e.attachments || e.text.startsWith('/')) return next(e)
+    const age = await cacheAge($)
+    if (age === undefined || age < CACHE_TTL_MS) return next(e)
     const tokens = await contextTokens($)
     if (tokens < minTokens) return next(e)
     cachedAt = undefined
@@ -77,7 +101,10 @@ export const register: Register = on => {
 
   on('turn.step', async function* ($, e, next) {
     const result = yield* next(e)
-    if (e.agentId === undefined && result.usage) cachedAt = await $.clock.now()
+    if (e.agentId === undefined && result.usage) {
+      cachedAt = await $.clock.now()
+      knownFor = await $.session.id()
+    }
     return result
   })
 }

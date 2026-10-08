@@ -77,13 +77,15 @@ let watch: Timer | undefined
 // when the last main-thread request finished; each request refreshes the cache's TTL
 let cachedAt: number | undefined
 let warnedCold = false
+// the session the cache age belongs to: a resume (from the picker too) swaps it without a session.start
+let knownFor: string | undefined
 
 // A resumed session has no request in this process yet, so its last reply comes from the transcript.
 // ponytail: same lookup as idle-compact's; assumes ~/.claude/projects/<cwd with - for each symbol>/<id>.jsonl
-const lastReplyAt = async ($: EngineInterface) => {
+const lastReplyAt = async ($: EngineInterface, id: string) => {
   const home = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))}/.claude`
   const folder = (await $.session.cwd()).replace(/[^a-zA-Z0-9]/g, '-')
-  const lines = (await $.fs.read(`${home}/projects/${folder}/${await $.session.id()}.jsonl`)).split('\n')
+  const lines = (await $.fs.read(`${home}/projects/${folder}/${id}.jsonl`)).split('\n')
   const last = lines.findLast(line => line.includes('"type":"assistant"'))
   const at = last === undefined ? NaN : Date.parse((JSON.parse(last) as { timestamp?: string }).timestamp ?? '')
   return Number.isNaN(at) ? undefined : at
@@ -114,6 +116,15 @@ const checkCold = async ($: EngineInterface) => {
   }
 }
 
+// Reads the transcript once per session id, and only when this process has no request of its own for it.
+const syncSession = async ($: EngineInterface) => {
+  const id = await $.session.id()
+  if (id === knownFor) return
+  knownFor = id
+  cachedAt = await lastReplyAt($, id).catch(() => undefined)
+  warnedCold = false
+}
+
 const idle = (min: number) => (min >= 120 ? `${Math.floor(min / 60)}h ${min % 60}m` : `${min}m`)
 
 const cacheLeft = async ($: EngineInterface) => {
@@ -125,7 +136,6 @@ const cacheLeft = async ($: EngineInterface) => {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-    cachedAt ??= await lastReplyAt($).catch(() => undefined)
     // clears the status line left by the first version of this mod
     $.ui.status(undefined)
     const id = await $.session.model()
@@ -138,6 +148,7 @@ export const register: Register = on => {
       // a resumed session has no response of its own yet, and its first read can fail while it loads:
       // keep trying, from the local estimate, until the band has a fill
       if ((await read($, usageAtom))?.tokens === undefined) await refresh($, true).catch(() => undefined)
+      await syncSession($)
       await cacheLeft($)
       await checkCold($)
       const now = await $.session.model()
@@ -153,7 +164,7 @@ export const register: Register = on => {
 
   // The prompt goes out anyway; the pane only says what it will cost.
   on('prompt.submit', async ($, e, next) => {
-    if (e.turnId === undefined && !e.text.startsWith('/')) await checkCold($)
+    if (e.turnId === undefined && !e.text.startsWith('/')) await syncSession($).then(() => checkCold($))
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -173,6 +184,7 @@ export const register: Register = on => {
     const total = u ? u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens : 0
     if (u && total > 0) {
       cachedAt = await $.clock.now()
+      knownFor = await $.session.id()
       warnedCold = false
       await update($, coldAtom, () => null)
       await update($, cacheAtom, () => ({ hit: Math.round((u.cache_read_input_tokens / total) * 100), left: CACHE_TTL_MS / 60_000 }))
