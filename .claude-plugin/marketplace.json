@@ -9,6 +9,7 @@
     { "name": "output-trimmer", "source": "./output-trimmer" },
     { "name": "subagent-router", "source": "./subagent-router" },
     { "name": "savings-meter", "source": "./savings-meter" },
-    { "name": "idle-compact", "source": "./idle-compact" }
+    { "name": "idle-compact", "source": "./idle-compact" },
+    { "name": "project-memory", "source": "./project-memory" }
   ]
 }

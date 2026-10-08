@@ -11,6 +11,7 @@ Claude Code mods I use every day. Each folder is one plugin, and all of them ins
 | [subagent-router](subagent-router/) | Search subagents run on Haiku and general-purpose ones on Sonnet, so the main model's tokens go to the work only it can do. |
 | [savings-meter](savings-meter/) | `/savings` shows what output-trimmer, subagent-router and auto-effort saved. |
 | [idle-compact](idle-compact/) | Compacts an idle session with a large context just before its prompt cache expires. |
+| [project-memory](project-memory/) | A Haiku agent reads the repo's `memory/` folder and returns only what the task needs. Another one compacts it. |
 
 ## Install
 
@@ -24,6 +25,7 @@ Install any mod by name:
 /plugin install subagent-router --marketplace noash-xrc/claude-tools
 /plugin install savings-meter --marketplace noash-xrc/claude-tools
 /plugin install idle-compact --marketplace noash-xrc/claude-tools
+/plugin install project-memory --marketplace noash-xrc/claude-tools
 ```
 
 The first time, answer `y` to add the marketplace, then pick a scope. Each mod's README covers its settings and how to update it.

@@ -1,0 +1,9 @@
+{
+  "name": "project-memory",
+  "version": "0.1.0",
+  "description": "A repo's memory/ folder, shared through git: a Haiku agent reads it and returns only what the task needs, another one compacts it",
+  "author": {
+    "name": "Noash"
+  },
+  "license": "MIT"
+}
