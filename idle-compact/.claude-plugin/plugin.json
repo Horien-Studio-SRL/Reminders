@@ -1,7 +1,9 @@
 {
   "name": "idle-compact",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Compacts an idle session with a large context just before its prompt cache expires, while the summary still reads from cache",
-  "author": { "name": "Noash" },
+  "author": {
+    "name": "Noash"
+  },
   "license": "MIT"
 }

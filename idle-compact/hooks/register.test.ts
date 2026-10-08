@@ -49,3 +49,24 @@ test('a small context, or the mod turned off, is left alone', async ($, on) => {
   await clock.advance(60 * 60_000)
   expect(compacted.length).toBe(0)
 })
+
+test('a prompt on a cold cache is held back, compacted for, and put back in the box', async ($, on) => {
+  const { clock, compacted } = engine(on, 150_000)
+  const filled: string[] = []
+  on('prompt.submit', (_$, e) => ({ text: e.text }))
+  on('prompt.fill', (_$, e) => {
+    filled.push(e.text)
+    return { isFilled: true } as never
+  })
+  // the mod's settings outlive a test, and the one before turned it off
+  await $.command.run({ command: 'idle-compact', args: 'on' })
+  await step($)
+  // no session.start, so no timer: as if the computer slept through it
+  await clock.advance(61 * 60_000)
+  expect('drop' in (await $.prompt.submit({ text: '/help', origin: { kind: 'composer' } } as never))).toBe(false)
+  expect('drop' in (await $.prompt.submit({ text: 'add a retry to the upload', origin: { kind: 'composer' } } as never))).toBe(true)
+  await clock.advance(1)
+  expect(compacted).toEqual(['Keep the open task, decisions made, files changed and anything left to do. Above all, keep what the next request needs: add a retry to the upload'])
+  expect(filled).toEqual(['add a retry to the upload'])
+  expect('drop' in (await $.prompt.submit({ text: 'add a retry to the upload', origin: { kind: 'composer' } } as never))).toBe(false)
+})

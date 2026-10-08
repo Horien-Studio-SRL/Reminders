@@ -11,7 +11,7 @@ const autoEffortAtom = atom({ plugin: 'auto-effort', key: 'effort' } as const, n
 // ponytail: assumes the 1-hour TTL Claude Code uses on subscriptions; API-key sessions on 5 minutes read too warm
 const CACHE_TTL_MS = 60 * 60 * 1000
 // past this, a prompt sent on a cold cache rewrites enough to be worth a warning
-const COLD_WARN_TOKENS = 80_000
+const COLD_WARN_TOKENS = 120_000
 
 const LIMIT_LABEL: Record<string, string> = { five_hour: '5h', seven_day: '7d', spend_limit: 'spend' }
 const BAR_CELLS = 8

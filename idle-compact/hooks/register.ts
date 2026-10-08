@@ -5,10 +5,12 @@ const CACHE_TTL_MS = 60 * 60 * 1000
 // compact this long before the cache expires, so the summary call still reads from it
 const MARGIN_MS = 5 * 60 * 1000
 const INSTRUCTIONS = 'Keep the open task, decisions made, files changed and anything left to do.'
+const forPrompt = (text: string) => `${INSTRUCTIONS} Above all, keep what the next request needs: ${text.slice(0, 2000)}`
 
 let enabled = true
-let minTokens = 80_000
+let minTokens = 120_000
 // when the last main-thread request finished; undefined once compacted, until the next one
+// ponytail: a resumed session has no step yet, so its cache age is unknown and neither path compacts it
 let cachedAt: number | undefined
 
 export const register: Register = on => {
@@ -38,6 +40,24 @@ export const register: Register = on => {
     else if (arg) return { text: `Unknown argument "${arg}". Use on, off or a number of thousands of tokens.` }
     return { text: enabled ? `idle-compact is on for contexts of ${minTokens / 1000}k tokens or more.` : 'idle-compact is off.' }
   })
+
+  // The fallback, for when the timer never fired (the computer slept): the cache is already cold, so the
+  // summary reads the context at the full input price, still half of rewriting it all to the cache.
+  // The engine refuses a compaction under a prompt.submit hook, so the prompt is dropped, the session
+  // compacts, and the prompt goes back in the box for one Enter.
+  on('prompt.submit', async ($, e, next) => {
+    if (!enabled || e.turnId !== undefined || e.origin.kind !== 'composer' || e.attachments || e.text.startsWith('/') || cachedAt === undefined) return next(e)
+    if ((await $.clock.now()) - cachedAt < CACHE_TTL_MS) return next(e)
+    const tokens = (await $.session.usage()).context.tokens ?? 0
+    if (tokens < minTokens) return next(e)
+    cachedAt = undefined
+    $.clock.after(0, async () => {
+      await $.session.compact({ instructions: forPrompt(e.text) }).catch(() => undefined)
+      await $.prompt.fill({ text: e.text })
+      $.ui.toast('idle-compact: compacted. Your prompt is back in the box, press Enter to send it.')
+    })
+    return { drop: `idle-compact: the cache expired, so the ${Math.round(tokens / 1000)}k context is compacted first. Your prompt comes back in the box when it's done.` }
+  }).catch(($, e, next) => next(e))
 
   on('turn.step', async function* ($, e, next) {
     const result = yield* next(e)
