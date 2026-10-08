@@ -14,7 +14,7 @@ If your computer slept or Claude Code wasn't running, the cache can expire witho
 2. The session compacts, told to keep above all what your prompt needs.
 3. Your prompt comes back in the box. Press Enter to send it.
 
-This costs more than compacting before expiry, because the summary reads the context at the full input price, but still about half of sending the prompt as it was. Claude Code doesn't allow a mod to compact while a prompt is on its way, so holding it back is the only way to do this. Prompts with images attached are sent as they are, since the box can't hold the images.
+This first turn saves nothing. The summary call misses the cache and writes the whole context back to it, at about what sending the prompt as it was would cost, and nothing reads that cache again. The saving comes after, since every later turn reads the short summary from cache instead of the full context. Claude Code doesn't allow a mod to compact while a prompt is on its way, so holding it back is the only way to do this. Prompts with images attached are sent as they are, since the box can't hold the images.
 
 A resumed session (`claude --resume`, or a restart) works out its cache age from the last reply in its transcript, so both the timer and the fallback cover it. The mod reads the transcript once at startup, from the default place under `~/.claude/projects`.
 

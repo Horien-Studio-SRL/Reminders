@@ -78,7 +78,7 @@ export const register: Register = on => {
   })
 
   // The fallback, for when the timer never fired (the computer slept): the cache is already cold, so the
-  // summary reads the context at the full input price, still half of rewriting it all to the cache.
+  // summary call rewrites the context to the cache, about what the prompt would have cost; later turns read only the summary.
   // The engine refuses a compaction under a prompt.submit hook, so the prompt is dropped, the session
   // compacts, and the prompt goes back in the box for one Enter.
   on('prompt.submit', async ($, e, next) => {
