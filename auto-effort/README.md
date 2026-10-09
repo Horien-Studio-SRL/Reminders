@@ -2,7 +2,7 @@
 
 A Claude Code mod that picks the effort level for each prompt you send. On a subscription, lower effort on easy turns means less thinking, so your usage limits last longer.
 
-When you send a prompt, Haiku sorts it into one of three levels:
+When you send a prompt, Haiku reads it along with the last six messages of the conversation and sorts it into one of three levels. Because of the context, a short prompt like "go ahead and implement it" is rated by the plan it refers to.
 
 | Level | For |
 | --- | --- |
@@ -10,7 +10,12 @@ When you send a prompt, Haiku sorts it into one of three levels:
 | `medium` | Ordinary code edits and multi-step work. |
 | `high` | Hard debugging, design, large refactors, or "still broken" after a failed attempt. |
 
-The level holds for every step of that turn. A turn you didn't start, such as a background task finishing, keeps the previous level so effort doesn't flip back and forth. With context-meter installed, its band shows the current level; the mod draws nothing itself.
+During the turn the level can only rise, based on what Claude does:
+
+- After the first file edit, at least `medium`.
+- After edits to four different files, Claude leaving plan mode (`ExitPlanMode`), or 15 steps, `high`.
+
+Edits made by subagents don't count. The next prompt starts from Haiku's pick again. A turn you didn't start, such as a background task finishing, keeps the previous level so effort doesn't flip back and forth. With context-meter installed, its band shows the current level; the mod draws nothing itself.
 
 Explore subagents run at `low` unless Claude asks for a specific effort. A subagent starts with an empty context, so this costs no cache.
 
@@ -22,7 +27,9 @@ Once any of your usage windows passes 80%, either the 5-hour or the 7-day one, t
 
 ## The prompt cache
 
-Anthropic's API can change effort in two ways. A per-message change keeps the cached conversation. A top-level change throws it away, and the next request pays to cache the whole conversation again. I haven't confirmed which way Claude Code sends the change this mod makes. So the mod checks: if a switch writes more to the cache than it reads, you get a toast saying so. If that toast keeps appearing, the switches cost more than they save, and you should run `/auto-effort off`.
+I checked about 40 effort switches across 40 sessions. Switching between `low`, `medium` and `high` kept the cached conversation every time, so raising the level partway through a turn costs nothing extra. Switching to or from `max` threw the cache away and rewrote 180-250k tokens. The mod never sets `max` or `xhigh`, so that cost only comes from `/effort` or ultrathink.
+
+In case that changes, the mod still checks: if a switch writes more to the cache than it reads, you get a toast once. If it keeps appearing, run `/auto-effort off`.
 
 ## Commands
 
@@ -35,7 +42,7 @@ Anthropic's API can change effort in two ways. A per-message change keeps the ca
 /auto-effort budget off turn budget mode off (budget on brings back 80%)
 ```
 
-Each prompt costs one small Haiku call to classify it.
+Each prompt costs one small Haiku call to classify it, with the last six messages included (up to 800 characters each).
 
 ## Install
 

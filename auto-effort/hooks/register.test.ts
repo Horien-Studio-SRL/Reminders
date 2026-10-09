@@ -22,8 +22,8 @@ const engine = (on: On, usage = { cache_read_input_tokens: 9_000, cache_creation
   return sent
 }
 
-const step = async ($: Engine, turnId: string, effort: string, model = 'claude-opus-5-5') => {
-  for await (const _ of $.turn.step({ turnId, index: 0, model, effort: effort as never, messageCount: 1 }));
+const step = async ($: Engine, turnId: string, effort: string, model = 'claude-opus-5-5', index = 0) => {
+  for await (const _ of $.turn.step({ turnId, index, model, effort: effort as never, messageCount: 1 }));
 }
 
 test('each prompt picks the effort its turn runs at', async ($, on) => {
@@ -37,6 +37,42 @@ test('each prompt picks the effort its turn runs at', async ($, on) => {
   await $.prompt.submit({ text: 'still broken, the race is back' })
   await step($, 't2', 'medium')
   expect(sent).toEqual(['low', 'high'])
+})
+
+test('Haiku reads the last messages along with the prompt', async ($, on) => {
+  engine(on)
+  let asked = ''
+  on('session.messages', () => ({ value: [{ role: 'assistant', text: 'Plan: rewrite the parser in three files.', toolUses: [] }] }) as never)
+  on('model.classify', (_$, e) => {
+    asked = e.text
+    return { value: HIGH }
+  })
+
+  await $.prompt.submit({ text: 'go ahead' })
+  expect(asked).toContain('Plan: rewrite the parser')
+  expect(asked).toContain('go ahead')
+})
+
+test('a turn that edits files, runs a plan or runs long rises but never drops', async ($, on) => {
+  const sent = engine(on)
+  on('model.classify', () => ({ value: LOW }))
+  on('tool.call', () => ({ result: 'ok' }) as never)
+  const edit = (file_path: string, agentId?: string) => $.tool.call({ tool: 'Edit', file_path, old_string: 'a', new_string: 'b', agentId } as never)
+
+  await $.prompt.submit({ text: 'go ahead' })
+  await step($, 't1', 'medium')
+  await edit('a.ts', 'sub-1')
+  await step($, 't1', 'medium', undefined, 1)
+  await edit('a.ts')
+  await step($, 't1', 'medium', undefined, 2)
+  for (const f of ['b.ts', 'c.ts', 'd.ts']) await edit(f)
+  await step($, 't1', 'medium', undefined, 3)
+  await step($, 't2', 'medium')
+  await step($, 't2', 'medium', undefined, 15)
+  await step($, 't3', 'medium')
+  await $.tool.call({ tool: 'ExitPlanMode' } as never)
+  await step($, 't3', 'medium', undefined, 1)
+  expect(sent).toEqual(['low', 'low', 'medium', 'high', 'low', 'high', 'low', 'high'])
 })
 
 test('xhigh and max from /effort or ultrathink stand', async ($, on) => {
