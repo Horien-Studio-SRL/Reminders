@@ -11,7 +11,7 @@ When a command prints more than 150 lines or 8,000 characters, Claude gets:
 
 Long lines are cut at 300 characters. The full output goes to `claude-trimmed/` in your temp folder.
 
-Some commands are left whole, because Claude ran them to see exactly that text: `cat`, `head`, `tail`, `sed`, `awk`, `grep`, `rg`, `jq`, `diff`, `git diff`, `git show`, `git log` and `git blame`. Reading the saved file back is left whole too.
+Some commands are left whole, because Claude ran them to see exactly that text: `cat`, `head`, `tail`, `sed`, `awk`, `grep`, `rg`, `jq`, `diff`, `git diff`, `git show`, `git log` and `git blame`. Reading the saved file back is left whole too. Only the first word of the command is checked, so `cd src && cat big.log` is trimmed like any other command.
 
 When a command fails, Claude still sees the trimmed output as an error. The debug log notes this as the mod refusing the call after it ran. The command did run, and nothing is undone.
 

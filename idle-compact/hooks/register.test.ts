@@ -9,7 +9,7 @@ type On = Parameters<TestBody>[1]
 const engine = (on: On, tokens: number | undefined, estimate = 0, transcripts: Record<string, number> = {}) => {
   const clock = mock.clock(on)
   const compacted: unknown[] = []
-  const at = { id: 'new' }
+  const at = { id: 'new', failing: false }
   const reads: string[] = []
   on('session.start', () => ({ cwd: '/' }))
   on('session.id', () => ({ value: at.id }) as never)
@@ -28,14 +28,19 @@ const engine = (on: On, tokens: number | undefined, estimate = 0, transcripts: R
   }))
   on('session.compact', (_$, e) => {
     compacted.push(e.instructions)
+    if (at.failing) throw new Error('a turn is running')
     return { messages: [{ role: 'user', text: 'summary', toolUses: [] }] } as never
   })
-  on('ui.toast', () => ({ value: undefined }) as never)
+  const toasts: string[] = []
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined } as never
+  })
   on('command.register', () => ({ value: undefined }) as never)
   on('turn.step', async function* (_$, e) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: { input_tokens: 1, cache_read_input_tokens: 1, cache_creation_input_tokens: 0, output_tokens: 1, model: e.model } } as never
   })
-  return { clock, compacted, at, reads }
+  return { clock, compacted, at, reads, toasts }
 }
 
 const step = async ($: Engine) => {
@@ -51,6 +56,26 @@ test('an idle large context compacts once, five minutes before the cache expires
   await clock.advance(2 * 60_000)
   await clock.advance(10 * 60_000)
   expect(compacted.length).toBe(1)
+})
+
+test('a failed compaction is retried on the next tick, by one timer even after a resume', async ($, on) => {
+  const { clock, compacted, at, toasts } = engine(on, 150_000)
+  await $.command.run({ command: 'idle-compact', args: 'on' })
+  await $.session.start({ cwd: '/' } as never)
+  await $.session.start({ cwd: '/' } as never)
+  await step($)
+  at.failing = true
+  await clock.advance(55 * 60_000)
+  expect(compacted.length).toBe(1)
+  await clock.advance(60_000)
+  expect(compacted.length).toBe(2)
+  expect(toasts).toEqual(['idle-compact: could not compact the idle context, will try again.'])
+  at.failing = false
+  await clock.advance(60_000)
+  expect(compacted.length).toBe(3)
+  expect(toasts[1]).toContain('compacted a 150k context')
+  await clock.advance(5 * 60_000)
+  expect(compacted.length).toBe(3)
 })
 
 test('a small context, or the mod turned off, is left alone', async ($, on) => {

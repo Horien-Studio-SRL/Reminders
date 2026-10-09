@@ -1,7 +1,7 @@
 {
   "name": "subagent-router",
-  "version": "0.2.0",
-  "description": "Runs search subagents on Haiku and general-purpose ones on Sonnet, so the main model's tokens go to the work only it can do",
+  "version": "0.3.0",
+  "description": "Runs search subagents on Haiku and general-purpose ones on Sonnet, and /orchestrate splits a big task across scout, worker and reviewer subagents",
   "author": {
     "name": "Noash"
   },

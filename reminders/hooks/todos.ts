@@ -85,7 +85,7 @@ export const add = (md: string, t: Omit<Todo, 'line'>): { md: string; error?: st
 {
   const key = t.text.replace(/\s+/g, ' ').trim().toLowerCase()
   if (!key) return { md, error: 'Reminder text is empty.' }
-  if (parseOpen(md).some(o => o.text.toLowerCase() === key)) return { md, error: 'An open reminder already has this text.' }
+  if (parseOpen(md).some(o => o.text.replace(/\s+/g, ' ').trim().toLowerCase() === key)) return { md, error: 'An open reminder already has this text.' }
 
   const lines = md.split(/\r?\n/)
   ensureSections(lines)

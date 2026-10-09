@@ -72,7 +72,8 @@ export const register: Register = on => {
       const messages = await $.session.messages().catch(() => [])
       const label = await $.model.classify(withContext(e.text, messages), LABELS, { model: 'haiku' }).catch(() => undefined)
       const picked = label?.split(':')[0]
-      if (picked && LEVELS.includes(picked)) level = picked as Level
+      // a failed or garbled answer clears the last prompt's pick, so the default applies
+      level = picked && LEVELS.includes(picked) ? (picked as Level) : undefined
     }
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -85,7 +86,7 @@ export const register: Register = on => {
 
   // Search subagents start with no context, so a lower effort there loses no cache.
   on('tool.call', { tool: 'Agent' }, ($, e, next) =>
-    mode !== 'off' && e.subagent_type === 'Explore' && e.effort === undefined ? next({ ...e, effort: 'low' }) : next(e),
+    mode === 'auto' && e.subagent_type === 'Explore' && e.effort === undefined ? next({ ...e, effort: 'low' }) : next(e),
   ).catch(($, e, next) => next(e))
 
   // Only the main loop's tools count: a subagent's edits don't make the main turn harder.
@@ -101,7 +102,12 @@ export const register: Register = on => {
 
   on('turn.step', async function* ($, e, next) {
     // xhigh, max or a number came from /effort or ultrathink: more than the mod would pick, so it stands
-    if (e.agentId !== undefined || mode === 'off' || !LEVELS.includes(String(e.effort))) return yield* next(e)
+    if (e.agentId !== undefined || mode === 'off') return yield* next(e)
+    if (!LEVELS.includes(String(e.effort))) {
+      // stand aside, and clear the last pick so the band shows the effort this step really runs at
+      await update($, effortAtom, () => null)
+      return yield* next(e)
+    }
     if (e.turnId !== turn) {
       turn = e.turnId
       edited = new Set()
@@ -109,10 +115,13 @@ export const register: Register = on => {
     }
     // Switches among low, medium and high kept the cache in real sessions, so rising mid-turn is cheap.
     const seen = observed(e.index)
-    const auto = seen === 'low' || (level && RANK[level] >= RANK[seen]) ? level : seen
+    const auto = (seen === 'low' || (level && RANK[level] >= RANK[seen])) ? level : seen
     // a pin is the person's choice, so budget mode only caps automatic picks
     const effort = mode !== 'auto' ? mode : auto === 'high' && budgetOn() ? 'medium' : auto
-    if (!effort) return yield* next(e)
+    if (!effort) {
+      await update($, effortAtom, () => null)
+      return yield* next(e)
+    }
 
     await update($, effortAtom, () => `${effort}${mode !== 'auto' ? ' (pinned)' : budgetOn() ? ' (budget)' : ''}`)
     const result = yield* next({ ...e, effort })
