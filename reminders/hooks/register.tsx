@@ -382,8 +382,9 @@ const afterEdit = async <R extends ToolCallResult>($: EngineInterface, e: object
     hits.forEach(t => told.add(t.text))
     return { ...r, context: [...(r.context ?? []), pointerNote(hits, path)] } as R
   }
-  catch
+  catch (err)
   {
+    $.ui.toast(`Could not check reminders after the edit: ${err}`)
     return r
   }
 }
@@ -410,6 +411,7 @@ export const register: Register = (on, options) =>
   {
     where = undefined
     told.clear()
+    explained.clear()
     const path = await filePath($)
     await $.command.register({
       name: 'todos',
@@ -665,7 +667,7 @@ export const register: Register = (on, options) =>
     {
       asking = undefined
       await $.ui.close({ id: PANE }).catch(() => undefined)
-      await $.prompt.submit({ text: resolvePrompt(t, how, path), asUser: true })
+      await $.prompt.submit({ text: resolvePrompt(t, how, path), asUser: true }).catch(err => $.ui.toast(`Could not send to Claude: ${err}`))
     }
 
     // Add opens the field under the title (pressed again, closes it); Enter with a note sends it.
@@ -682,7 +684,7 @@ export const register: Register = (on, options) =>
       adding = false
       if (!note.trim()) return $.ui.invalidate('ui.render')
       await $.ui.close({ id: PANE }).catch(() => undefined)
-      await $.prompt.submit({ text: addPrompt(note, path), asUser: true })
+      await $.prompt.submit({ text: addPrompt(note, path), asUser: true }).catch(err => $.ui.toast(`Could not send to Claude: ${err}`))
     }
 
     const undo = async (t: Todo) =>

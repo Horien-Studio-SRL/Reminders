@@ -37,10 +37,10 @@ export const trim = (text: string): string | undefined => {
 }
 
 const save = async ($: EngineInterface, id: string, text: string, kept: number) => {
-  await update($, trimmedAtom, n => n + Math.round((text.length - kept) / 4))
   const tmp = (await $.env.get('TEMP')) ?? (await $.env.get('TMPDIR')) ?? '/tmp'
   const path = `${tmp.replace(/\\/g, '/')}/${DIR}/${id}.txt`
   await $.fs.write(path, text)
+  await update($, trimmedAtom, n => n + Math.round((text.length - kept) / 4))
   return `[output-trimmer kept the start, the end and the error lines. Full output: ${path}]`
 }
 
@@ -48,7 +48,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
     if (ran.deny !== undefined || READS.test(e.command) || e.command.includes(DIR)) return ran
-    const id = e.tool_use_id ?? String(await $.clock.now())
+    const id = e.tool_use_id ?? `${await $.clock.now()}-${Math.random().toString(36).slice(2, 8)}`
 
     // A failed command's output only reaches Claude as error text; a deny after the run delivers the trimmed text the same way.
     if (ran.isError) {

@@ -77,6 +77,9 @@ let watch: Timer | undefined
 // when the last main-thread request finished; each request refreshes the cache's TTL
 let cachedAt: number | undefined
 let warnedCold = false
+// estimate reads tried since the last turn or session switch with no fill yet
+let fillTries = 0
+const MAX_FILL_TRIES = 5
 // the session the cache age belongs to: a resume (from the picker too) swaps it without a session.start
 let knownFor: string | undefined
 
@@ -121,6 +124,7 @@ const syncSession = async ($: EngineInterface) => {
   const id = await $.session.id()
   if (id === knownFor) return
   knownFor = id
+  fillTries = 0
   cachedAt = await lastReplyAt($, id).catch(() => undefined)
   warnedCold = false
 }
@@ -146,8 +150,11 @@ export const register: Register = on => {
     watch?.cancel()
     watch = $.clock.every(1000, async () => {
       // a resumed session has no response of its own yet, and its first read can fail while it loads:
-      // keep trying, from the local estimate, until the band has a fill
-      if ((await read($, usageAtom))?.tokens === undefined) await refresh($, true).catch(() => undefined)
+      // keep trying, from the local estimate, until the band has a fill or the tries run out
+      if (fillTries < MAX_FILL_TRIES && (await read($, usageAtom))?.tokens === undefined) {
+        fillTries++
+        await refresh($, true).catch(() => undefined)
+      }
       await syncSession($)
       await cacheLeft($)
       await checkCold($)
@@ -177,9 +184,10 @@ export const register: Register = on => {
   // fill after each tool round instead of only at the end of the turn.
   on('turn.step', async function* ($, e, next) {
     if (e.agentId !== undefined) return yield* next(e)
+    fillTries = 0
     await update($, modelAtom, () => model(e.model, e.effort))
     const result = yield* next(e)
-    $.clock.after(250, () => void refresh($))
+    $.clock.after(250, () => void refresh($).catch(() => undefined))
     const u = result.usage
     const total = u ? u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens : 0
     if (u && total > 0) {
@@ -195,7 +203,7 @@ export const register: Register = on => {
   on('session.compact', async ($, e, next) => {
     const result = await next(e)
     if (e.agentId !== undefined || 'skip' in result) return result
-    $.clock.after(1000, () => void refresh($, true))
+    $.clock.after(1000, () => void refresh($, true).catch(() => undefined))
     // whoever compacted (idle-compact, /compact, the pane's button), the pane's choice is made
     await update($, coldAtom, () => null)
     await $.ui.close({ id: COLD_PANE }).catch(() => undefined)

@@ -1,4 +1,4 @@
-import { atom, read } from 'claude-code'
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, TurnStepResult } from 'claude-code'
 
 type Usage = NonNullable<TurnStepResult['usage']>
@@ -27,6 +27,8 @@ const cost = (model: string, u: Usage) => {
 
 const effortAtom = atom({ plugin: 'auto-effort', key: 'effort' } as const, null)
 const trimmedAtom = atom({ plugin: 'output-trimmer', key: 'trimmed' } as const, 0)
+// trimmed tokens already dropped from the context by a compaction; an atom like trimmedAtom, so both last the same session
+const baseAtom = atom({ plugin: 'savings-meter', key: 'base' } as const, 0)
 const routedAtom = atom({ plugin: 'subagent-router', key: 'routed' } as const, [])
 
 const group = (): Group => ({ prompts: 0, output: 0, usd: 0, window: 0 })
@@ -34,10 +36,10 @@ const fresh = (since: string): Ledger => ({ since, trimmer: { tokens: 0, usd: 0 
 
 let ledger: Ledger | undefined
 let mainModel = ''
-// trimmed tokens already dropped from the context by a compaction
-let trimmedBase = 0
 let window: number | undefined
 let mode: 'on' | 'off' = 'off'
+// a typed prompt waits for its first step, because the effort that step runs at is only known then
+let pending = false
 
 // ponytail: two sessions at once each write their own copy, so the last one to save wins
 const load = async ($: EngineInterface) =>
@@ -78,7 +80,7 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    if (e.turnId === undefined && !e.text.startsWith('/')) (await load($)).effort[mode].prompts++
+    if (e.turnId === undefined && !e.text.startsWith('/')) pending = true
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -92,7 +94,7 @@ export const register: Register = on => {
 
   on('session.compact', async ($, e, next) => {
     const result = await next(e)
-    if (e.agentId === undefined) trimmedBase = await read($, trimmedAtom)
+    if (e.agentId === undefined) await update($, baseAtom, () => read($, trimmedAtom))
     return result
   })
 
@@ -107,10 +109,12 @@ export const register: Register = on => {
       mainModel = model
       mode = (await read($, effortAtom)) === null ? 'off' : 'on'
       const g = l.effort[mode]
+      if (pending) g.prompts++
+      pending = false
       g.output += u.output_tokens
       g.usd += cost(model, u) ?? 0
       // every main request would have re-read the trimmed text, at the cache-read price
-      const trimmed = (await read($, trimmedAtom)) - trimmedBase
+      const trimmed = (await read($, trimmedAtom)) - (await read($, baseAtom))
       l.trimmer.tokens += trimmed
       l.trimmer.usd += (trimmed * (price(model)?.[2] ?? 0)) / 1e6
     } else if ((await read($, routedAtom)).includes(e.agentId)) {

@@ -176,6 +176,24 @@ test('a resumed session whose first usage read fails still shows the band', asyn
   expect((await bandText($))[0]).toBe('▰▰▱▱▱▱▱▱ ~30% 60k/200k')
 })
 
+test('a session whose usage never carries tokens stops retrying the estimate after a few tries', async ($, on) => {
+  const clock = mock.clock(on)
+  coreBand(on)
+  let calls = 0
+  on('session.usage', () => {
+    calls++
+    return { value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] } }
+  })
+  on('session.start', () => ({ cwd: '/' }))
+  on('ui.status', () => ({ value: undefined }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('settings.read', () => ({ value: {} }))
+
+  await $.session.start({ cwd: '/' } as never)
+  await clock.advance(20_000)
+  expect(calls).toBeLessThan(10)
+})
+
 test('a resumed session idle past the cache lifetime opens the cold-cache pane with the cost', async ($, on) => {
   const clock = mock.clock(on)
   usage(on)

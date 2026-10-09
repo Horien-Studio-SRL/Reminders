@@ -1,4 +1,4 @@
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, Timer } from 'claude-code'
 
 // ponytail: assumes the 1-hour TTL Claude Code uses on subscriptions, like context-meter
 const CACHE_TTL_MS = 60 * 60 * 1000
@@ -15,6 +15,10 @@ let cachedAt: number | undefined
 let knownFor: string | undefined
 // what the last prompt was, for /idle-compact to report
 let lastPrompt = 'none yet'
+// the idle timer; a resume runs session.start again, so the old one is cancelled first
+let watch: Timer | undefined
+// the timer retries every minute, so its failure toast shows once until a compaction goes through
+let failed = false
 
 // A resumed session reports no size until its first reply, so fall back to the engine's local estimate (no API call).
 const contextTokens = async ($: EngineInterface) =>
@@ -51,16 +55,23 @@ export const register: Register = on => {
       description: 'Show or set compaction of idle sessions before the cache expires: on, off, or a minimum context in thousands of tokens',
       argumentHint: '[on | off | <k tokens>]',
     })
-    $.clock.every(60_000, async () => {
+    watch?.cancel()
+    watch = $.clock.every(60_000, async () => {
       if (!enabled) return
       const age = await cacheAge($)
       if (age === undefined || age < CACHE_TTL_MS - MARGIN_MS) return
       const tokens = await contextTokens($)
       if (tokens < minTokens) return
-      cachedAt = undefined
-      // rejects while a turn runs; the next idle stretch tries again
+      // rejects while a turn runs; cachedAt stays set, so the next tick tries again
       const r = await $.session.compact({ instructions: INSTRUCTIONS }).catch(() => undefined)
-      if (r && !('skip' in r)) $.ui.toast(`idle-compact: compacted a ${Math.round(tokens / 1000)}k context before its cache expired.`)
+      if (!r) {
+        if (!failed) $.ui.toast('idle-compact: could not compact the idle context, will try again.')
+        failed = true
+        return
+      }
+      failed = false
+      cachedAt = undefined
+      if (!('skip' in r)) $.ui.toast(`idle-compact: compacted a ${Math.round(tokens / 1000)}k context before its cache expired.`)
     })
     return started
   })
@@ -92,9 +103,9 @@ export const register: Register = on => {
     if (tokens < minTokens) return next(e)
     cachedAt = undefined
     $.clock.after(0, async () => {
-      await $.session.compact({ instructions: forPrompt(e.text) }).catch(() => undefined)
+      const r = await $.session.compact({ instructions: forPrompt(e.text) }).catch(() => undefined)
       await $.prompt.fill({ text: e.text })
-      $.ui.toast('idle-compact: compacted. Your prompt is back in the box, press Enter to send it.')
+      $.ui.toast(r ? 'idle-compact: compacted. Your prompt is back in the box, press Enter to send it.' : 'idle-compact: could not compact. Your prompt is back in the box, press Enter to send it anyway.')
     })
     return { drop: `idle-compact: the cache expired, so the ${Math.round(tokens / 1000)}k context is compacted first. Your prompt comes back in the box when it's done.` }
   }).catch(($, e, next) => next(e))

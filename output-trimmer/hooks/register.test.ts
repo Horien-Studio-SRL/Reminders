@@ -60,3 +60,18 @@ test('a failed command comes back trimmed as error text', async ($, on) => {
   expect(r.deny?.split('\n')[1]).toBe('Exit code 1')
   expect(Object.keys(files)).toEqual(['C:/Temp/claude-trimmed/toolu_2.txt'])
 })
+
+test('a save that throws leaves the command run once', async ($, on) => {
+  let runs = 0
+  on('tool.call', { tool: 'Bash' }, () => (runs++, ok(log(1000))) as never)
+  on('env.get', () => ({ value: 'C:\\Temp' }) as never)
+  const counted: unknown[] = []
+  on('state.set', (_$, e) => (counted.push((e as { value: unknown }).value), { value: { isSet: true, version: 1 } }) as never)
+  on('fs.write', () => {
+    throw new Error('disk full')
+  })
+  const r = await $.tool.call({ tool: 'Bash', command: 'npm test', tool_use_id: 'toolu_3' } as never)
+  expect(runs).toBe(1)
+  expect((r.result as { stdout: string }).stdout).toBe(log(1000))
+  expect(counted).toEqual([])
+})

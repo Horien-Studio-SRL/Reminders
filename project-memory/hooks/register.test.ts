@@ -4,14 +4,17 @@ import type { TestBody } from 'claude-code/testing'
 type Engine = Parameters<TestBody>[0]
 type On = Parameters<TestBody>[1]
 
-type Repo = { index?: string; files?: Record<string, string> }
+type Repo = { index?: string; files?: Record<string, string>; unreadable?: string[] }
 
 // the engine beneath the plugin: a repo at C:\repo, its memory/MEMORY.md found by the ancestor walk, one engine section in the prompt
 const engine = (on: On, repo: Repo) => {
   on('session.start', () => ({ cwd: 'C:\\repo\\sub' }) as never)
   on('fs.ancestors', () => ({ value: repo.index === undefined ? [] : [{ dir: 'C:\\repo', name: 'memory/MEMORY.md', content: repo.index, parts: [{ path: 'C:\\repo\\memory\\MEMORY.md', content: repo.index }] }] }) as never)
-  on('fs.list', () => ({ value: ['MEMORY.md', ...Object.keys(repo.files ?? {})].map(name => ({ name, kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false })) }))
-  on('fs.read', (_$, e) => ({ value: Object.entries(repo.files ?? {}).find(([name]) => e.path.endsWith(name))?.[1] ?? '' }) as never)
+  on('fs.list', () => ({ value: ['MEMORY.md', ...Object.keys(repo.files ?? {}), ...(repo.unreadable ?? [])].map(name => ({ name, kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false })) }))
+  on('fs.read', (_$, e) => {
+    if (repo.unreadable?.some(name => e.path.endsWith(name))) throw new Error('EACCES')
+    return ({ value: Object.entries(repo.files ?? {}).find(([name]) => e.path.endsWith(name))?.[1] ?? '' }) as never
+  })
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'intro', scope: 'shared' }] }))
   on('agent.offer', () => ({ isOffered: true }))
 }
@@ -54,6 +57,23 @@ test('rejected lines from the memory files reach the prompt with their file', as
   await start($)
   expect(await section($)).toContain("- REJECTED: a Redis cache, it lost writes on restart. (memory/redis.md)")
   expect(await section($)).not.toContain('Nothing here')
+})
+
+test('a memory file that cannot be read is named in the prompt', async ($, on) => {
+  engine(on, { index: line, files: { 'redis.md': 'REJECTED: a Redis cache.\n' }, unreadable: ['locked.md'] })
+  await start($)
+  expect(await section($)).toContain("Couldn't read memory/locked.md")
+  expect(await section($)).toContain('(memory/redis.md)')
+})
+
+test('rejected lines past 4KB stay in the files and the prompt says how many', async ($, on) => {
+  const files = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`m${i}.md`, `REJECTED: approach number ${i} ${'x'.repeat(80)}\n`]))
+  engine(on, { index: line, files })
+  await start($)
+  const text = await section($)
+  const kept = text.split('\n').filter(l => l.startsWith('- REJECTED')).length
+  expect(kept).toBeLessThan(100)
+  expect(text).toContain(`- ${100 - kept} more in the memory files`)
 })
 
 test('a repo without memory gets neither, and other agents are untouched', async ($, on) => {

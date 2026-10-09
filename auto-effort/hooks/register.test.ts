@@ -22,6 +22,16 @@ const engine = (on: On, usage = { cache_read_input_tokens: 9_000, cache_creation
   return sent
 }
 
+// the values the mod wrote to its band atom, newest last
+const band = (on: On) => {
+  const writes: unknown[] = []
+  on('state.set', (_$, e) => {
+    writes.push(e.value)
+    return { value: { isSet: true, version: writes.length } } as never
+  })
+  return writes
+}
+
 const step = async ($: Engine, turnId: string, effort: string, model = 'claude-opus-5-5', index = 0) => {
   for await (const _ of $.turn.step({ turnId, index, model, effort: effort as never, messageCount: 1 }));
 }
@@ -85,6 +95,33 @@ test('xhigh and max from /effort or ultrathink stand', async ($, on) => {
   expect(sent).toEqual(['xhigh', 'max'])
 })
 
+test('a turn the mod stands aside on clears the level the band shows', async ($, on) => {
+  engine(on)
+  const writes = band(on)
+  on('model.classify', () => ({ value: HIGH }))
+
+  await $.prompt.submit({ text: 'hard' })
+  await step($, 't1', 'medium')
+  expect(writes.at(-1)).toBe('high')
+  await step($, 't2', 'xhigh')
+  expect(writes.at(-1)).toBe(null)
+})
+
+test('a failed classification drops the last pick', async ($, on) => {
+  const sent = engine(on)
+  const writes = band(on)
+  let label: string | undefined = HIGH
+  on('model.classify', () => (label ? { value: label } : Promise.reject(new Error('down'))) as never)
+
+  await $.prompt.submit({ text: 'hard' })
+  await step($, 't1', 'medium')
+  label = undefined
+  await $.prompt.submit({ text: 'what is this?' })
+  await step($, 't2', 'medium')
+  expect(sent).toEqual(['high', 'medium'])
+  expect(writes.at(-1)).toBe(null)
+})
+
 test('Explore subagents run at low unless the call names an effort', async ($, on) => {
   const got: unknown[] = []
   on('tool.call', { tool: 'Agent' }, (_$, e) => {
@@ -96,6 +133,11 @@ test('Explore subagents run at low unless the call names an effort', async ($, o
   await $.tool.call({ tool: 'Agent', description: 'find', prompt: 'find x', subagent_type: 'Explore', effort: 'high' } as never)
   await $.tool.call({ tool: 'Agent', description: 'fix', prompt: 'fix x', subagent_type: 'general-purpose' } as never)
   expect(got).toEqual(['low', 'high', undefined])
+
+  await $.command.run({ command: 'auto-effort', args: 'pin medium' })
+  await $.tool.call({ tool: 'Agent', description: 'find', prompt: 'find x', subagent_type: 'Explore' } as never)
+  await $.command.run({ command: 'auto-effort', args: 'on' })
+  expect(got.at(-1)).toBeUndefined()
 })
 
 test('a switch that rebuilds the cache warns once', async ($, on) => {

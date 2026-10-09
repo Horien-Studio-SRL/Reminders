@@ -17,7 +17,7 @@ During the turn the level can only rise, based on what Claude does:
 
 Edits made by subagents don't count. The next prompt starts from Haiku's pick again. A turn you didn't start, such as a background task finishing, keeps the previous level so effort doesn't flip back and forth. With context-meter installed, its band shows the current level; the mod draws nothing itself.
 
-Explore subagents run at `low` unless Claude asks for a specific effort. A subagent starts with an empty context, so this costs no cache.
+In automatic mode, Explore subagents run at `low` unless Claude asks for a specific effort. If you pinned a level or turned the mod off, they are left alone. A subagent starts with an empty context, so this costs no cache.
 
 The mod never goes above `high`. If you set `xhigh` or `max` with `/effort`, or write "ultrathink", it leaves that turn alone.
 
