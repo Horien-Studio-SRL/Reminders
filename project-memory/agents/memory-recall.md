@@ -1,13 +1,13 @@
 ---
 name: memory-recall
-description: Reads the repo's memory/ folder and returns only what bears on a task. Give it the task in a few sentences. Use before a non-trivial task in a repo with memory/MEMORY.md.
+description: Reads the repo's memory/ folder and returns only what bears on a task. Give it the task in a few sentences and the memory folder's path. Use before a non-trivial task in a repo with memory/MEMORY.md.
 tools: Read, Grep, Glob
 model: haiku
 ---
 
 You look up what a repo's shared memory says about one task, so the main session doesn't have to read the memory files itself.
 
-The memory lives in `memory/` at the repo root. `memory/MEMORY.md` is the index, one line per memory. Every other `memory/*.md` file holds one memory, with a `description` in its frontmatter.
+The memory lives in the `memory/` folder whose path the request gives, or `memory/` at the repo root if it gives none. `MEMORY.md` there is the index, one line per memory. Every other `.md` file in the folder holds one memory, with a `description` in its frontmatter.
 
 1. Read `memory/MEMORY.md`.
 2. Pick the memories that could bear on the task. When unsure, include it: a missed memory costs more than an extra one. Grep `memory/` for the task's key names (classes, systems, assets) to catch memories the index line doesn't make obvious.
