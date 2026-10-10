@@ -23,7 +23,7 @@ Effort isn't set here. With auto-effort installed, Explore agents run at `low`.
 `/orchestrate <task>` runs a big task with the main session as orchestrator and three subagent roles under it:
 
 - **scout** reads code and answers questions, never edits
-- **worker** completes one task from a contract: the files it owns, a check command and what to report back
+- **worker** completes one task from a contract: the files it owns, a check command and what to report back. It can spawn Explore agents for searches, and no other type. Those take no slot under the agent limit, and their spend counts toward the run's
 - **reviewer** checks a worker's diff against its contract, for the tasks the orchestrator marks as risky
 
 A pane opens first with three settings, then Start:
@@ -38,7 +38,7 @@ A pane opens first with three settings, then Start:
 - **Workers at once**, 3 by default. A spawn past the limit is refused until one finishes.
 - **Approval**: `plan` (default) stops once for you to approve the plan after scouting, `step` before every step, `off` never.
 
-The orchestrator keeps the plan in Claude Code's task list. Tasks that edit the same files run one after another. It runs each task's check command itself, and a task that fails gets one retry, then a retry on the next level's worker, then it asks you. After Start the pane keeps a fixed height: a progress bar of finished tasks, a folded line counting the running agents (click it for one row per worker slot with the agent's role, model and spend), what comes next, and Stop. Approve appears only while the orchestrator waits for you. At xhigh, consider `/model fable` for the orchestrator first; the mod leaves the main model alone.
+The orchestrator keeps the plan in the mod's own task list, through its `update_tasks` tool. Tasks that edit the same files run one after another. It runs each task's check command itself, and a task that fails gets one retry, then a retry on the next level's worker, then it asks you. After Start the pane keeps a fixed height: the time since Start (it stops when the last task completes), a progress bar of finished tasks, a folded line counting the running agents (click it for one row per worker slot with the agent's role, model and spend), what comes next, and Stop. Approve appears only while the orchestrator waits for you. At xhigh, consider `/model fable` for the orchestrator first; the mod leaves the main model alone.
 
 - `/orchestrate <level>` changes the level mid-run, for agents spawned from the next turn
 - `/orchestrate stop` ends the run and prints what its agents spent at API prices

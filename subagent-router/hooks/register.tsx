@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, TurnStepResult } from 'claude-code'
-import type { Approval, Level, Run, RunTask } from '../types/index'
+import type { EngineInterface, Register, Timer, TurnStepResult } from 'claude-code'
+import type { Approval, Level, Run, RunAgent, RunTask } from '../types/index'
 
 // Agent types whose work a cheaper model does as well; any other type keeps its own model.
 const ROUTES: Record<string, string> = { Explore: 'haiku', 'general-purpose': 'sonnet' }
@@ -11,6 +11,8 @@ const rank = (model: string) => RANK.findIndex(m => model.toLowerCase().includes
 let enabled = true
 // numbers the slot an orchestration agent holds until its spawn returns an id
 let reserved = 0
+// redraws the pane each second while a run is on, so its timer moves
+let tick: Timer | undefined
 // savings-meter reads this to price the routed agents' tokens
 const routedAtom = atom({ plugin: 'subagent-router', key: 'routed' } as const, [])
 const runAtom = atom({ plugin: 'subagent-router', key: 'run' } as const, null)
@@ -36,8 +38,9 @@ const ROLE_SPECS: Record<Role, { description: string; prompt: string; disallowed
   },
   worker: {
     description: 'Orchestration worker: completes one task from a contract',
-    prompt: 'You are a worker for an orchestrator. You get one task as a contract: what to do, the files you own, a check command and a deliverable format. Edit only the files you own; if the task needs another file, stop and say which and why. Run the check command before you finish. Reply in the deliverable format only: files changed, the check result, open questions.',
-    disallowedTools: ['Agent'],
+    prompt: 'You are a worker for an orchestrator. You get one task as a contract: what to do, the files you own, a check command and a deliverable format. Edit only the files you own; if the task needs another file, stop and say which and why. To find something across many files, spawn an Explore agent and work from its answer; it is the only agent type you can spawn. Run the check command before you finish. Reply in the deliverable format only: files changed, the check result, open questions.',
+    // the Agent tool stays for Explore; agent.spawn refuses any other type a worker asks for
+    disallowedTools: [],
   },
   reviewer: {
     description: 'Orchestration reviewer: checks one task\'s diff against its contract, never edits',
@@ -113,8 +116,20 @@ const cost = (model: string, u: NonNullable<TurnStepResult['usage']>) => {
   return (u.input_tokens * p[0] + u.cache_creation_input_tokens * p[0] * 2 + u.cache_read_input_tokens * p[2] + u.output_tokens * p[1]) / 1e6
 }
 const usd = (n: number) => `$${n.toFixed(2)}`
+// m:ss, or h:mm:ss from an hour on
+const elapsed = (ms: number) => {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  const mmss = `${Math.floor(s / 60) % 60}:${String(s % 60).padStart(2, '0')}`
+  return s < 3600 ? mmss : `${Math.floor(s / 3600)}:${mmss.padStart(5, '0')}`
+}
+const ticking = ($: EngineInterface, on: boolean) => {
+  tick?.cancel()
+  tick = on ? $.clock.every(1000, () => $.ui.invalidate('ui.render')) : undefined
+}
+// orchestration agents holding a slot; a worker's Explore agents take none
+const holding = (list: RunAgent[]) => list.filter(a => !a.isDone && a.role !== 'explore')
 
-const set = ($: EngineInterface, change: Partial<Run>) => update($, runAtom, r => (r ? { ...r, ...change } : r))
+const set =($: EngineInterface, change: Partial<Run>) => update($, runAtom, r => (r ? { ...r, ...change } : r))
 
 const PANE = 'orchestrate'
 const approve = async ($: EngineInterface) => {
@@ -124,6 +139,7 @@ const approve = async ($: EngineInterface) => {
 
 const stop = async ($: EngineInterface) => {
   const spent = (await read($, agentsAtom)).reduce((sum, a) => sum + a.usd, 0)
+  ticking($, false)
   await update($, runAtom, () => null)
   await update($, tasksAtom, () => [])
   await update($, agentsAtom, () => [])
@@ -132,8 +148,10 @@ const stop = async ($: EngineInterface) => {
 }
 
 const start = async ($: EngineInterface) => {
-  const run = await update($, runAtom, r => (r ? { ...r, started: true } : r))
+  const now = await $.clock.now()
+  const run = await update($, runAtom, r => (r ? { ...r, started: true, startedAt: now, finishedAt: 0 } : r))
   if (!run) return
+  ticking($, true)
   try {
     await registerRoles($, run.level)
     if (run.level === 'xhigh') $.ui.toast('xhigh: consider /model fable for the orchestrator')
@@ -143,6 +161,7 @@ const start = async ($: EngineInterface) => {
   catch (err) {
     // no orchestrator got the kickoff, so the pane goes back to its settings
     await set($, { started: false })
+    ticking($, false)
     $.ui.toast(`Could not start: ${err instanceof Error ? err.message : err}`)
   }
 }
@@ -154,7 +173,10 @@ export const register: Register = on => {
     await $.command.register({ name: 'orchestrate', description: 'Split a big task across scout, worker and reviewer subagents', argumentHint: '<task> | <level> | stop' })
     // a reload drops the plugin's agent types; a run in progress needs them back
     const run = await read($, runAtom)
-    if (run?.started) await registerRoles($, run.level)
+    if (run?.started) {
+      await registerRoles($, run.level)
+      ticking($, true)
+    }
     return next(e)
   })
 
@@ -178,7 +200,7 @@ export const register: Register = on => {
     if (!arg && !run) return { text: 'Usage: /orchestrate <task>' }
     if (arg && run?.started) return { text: 'An orchestration is running. /orchestrate stop ends it first.' }
     if (arg) {
-      await update($, runAtom, () => ({ task: arg, level: run?.level ?? 'mid', workers: run?.workers ?? 3, approval: run?.approval ?? 'plan', started: false, warned: false, awaiting: '', showAgents: false }))
+      await update($, runAtom, () => ({ task: arg, level: run?.level ?? 'mid', workers: run?.workers ?? 3, approval: run?.approval ?? 'plan', started: false, warned: false, awaiting: '', showAgents: false, startedAt: 0, finishedAt: 0 }))
       await update($, tasksAtom, () => [])
       await update($, agentsAtom, () => [])
     }
@@ -188,12 +210,15 @@ export const register: Register = on => {
 
   // A model Claude named in the call, a fork or a teammate is left alone; so is a route that wouldn't be cheaper than the parent.
   // An orchestration role past the worker limit is refused, and each one started is tracked for the pane.
+  // A worker may spawn Explore and nothing else; its Explore agents take no slot but their spend counts.
   on('agent.spawn', async ($, e, next) => {
+    const fromWorker = e.parentAgentId !== undefined && (await read($, agentsAtom)).some(a => a.id === e.parentAgentId && a.role === 'worker')
+    if (fromWorker && e.subagentType !== 'Explore') return { deny: 'A worker can spawn Explore agents only.' }
     const role = roleOf(e.subagentType)
     if (role) {
       const run = await read($, runAtom)
       const limit = run?.started ? run.workers : Infinity
-      const running = (list: { isDone: boolean }[]) => list.filter(a => !a.isDone).length
+      const running = (list: RunAgent[]) => holding(list).length
       // count and take the slot in one write, so two spawns at once can't both pass the limit
       const slot = `pending-${reserved++}`
       const taken = await update($, agentsAtom, list => (running(list) >= limit ? list : [...list, { id: slot, role, model: '', description: e.description, isDone: false, usd: 0 }]))
@@ -210,10 +235,11 @@ export const register: Register = on => {
     }
     const model = Object.hasOwn(ROUTES, e.subagentType) ? ROUTES[e.subagentType] : undefined
     const cheaper = model !== undefined && rank(model) < rank(e.parentModel)
-    if (!enabled || !cheaper || e.model !== undefined || e.fork || e.isTeammate) return next(e)
-    const r = await next({ ...e, model })
+    const routed = enabled && cheaper && e.model === undefined && !e.fork && !e.isTeammate
+    const r = await next(routed ? { ...e, model } : e)
     const id = 'agentId' in r ? r.agentId : undefined
-    if (id) await update($, routedAtom, ids => [...ids, id])
+    if (id && routed) await update($, routedAtom, ids => [...ids, id])
+    if (id && fromWorker) await update($, agentsAtom, list => [...list, { id, role: 'explore', model: r.model, description: e.description, isDone: false, usd: 0 }])
     return r
   }).catch(($, e, next) => next(e))
 
@@ -242,6 +268,10 @@ export const register: Register = on => {
       const t = { id: c.id, subject: c.subject ?? old?.subject ?? `#${c.id}`, status: c.status ?? old?.status ?? 'pending', blockedBy: c.blockedBy ?? old?.blockedBy ?? [], contract: c.contract ?? old?.contract ?? '' }
       return old ? l.map(x => (x.id === c.id ? t : x)) : [...l, t]
     }, list))
+    // the pane's timer stops when the last task completes, and runs on if a task is added after
+    const finished = list.length > 0 && list.every(t => t.status === 'completed')
+    const now = await $.clock.now()
+    await update($, runAtom, r => (r ? { ...r, finishedAt: finished ? r.finishedAt || now : 0 } : r))
     // contracts only on a read, so each update doesn't echo them all back
     const line = (t: RunTask) => `#${t.id} ${t.status}: ${t.subject}${t.blockedBy.length ? ` (after #${t.blockedBy.join(', #')})` : ''}${changes.length || !t.contract ? '' : `\n${t.contract}`}`
     return { result: list.map(line).join('\n') || 'No tasks.' } as never
@@ -320,7 +350,7 @@ export const register: Register = on => {
     const label = `${done}/${tasks.length} tasks${tasks.length ? ` · ${Math.round((done / tasks.length) * 100)}%` : ''}`
     const barWidth = Math.max(10, Math.min(40, width - label.length - 1))
     const filled = tasks.length ? Math.round((done / tasks.length) * barWidth) : 0
-    const running = agents.filter(a => !a.isDone)
+    const running = holding(agents)
     const slots = Array.from({ length: run.workers }, (_, i) => running[i])
     const family = (model: string) => RANK.find(m => model.includes(m)) ?? model
     // a deleted blocker no longer holds a task back
@@ -343,10 +373,12 @@ export const register: Register = on => {
       : !tasks.length ? '… Scouting and planning'
       : allDone ? '✓ All tasks done'
       : next ? `→ Next: ${next.subject}` : '… Working'
-    const meta = `${run.level} · ${usd(spent)}`
+    // a run started before the timer existed has no startedAt
+    const time = run.startedAt ? ` · ${elapsed((run.finishedAt || await $.clock.now()) - run.startedAt)}` : ''
+    const meta = `${run.level}${time} · ${usd(spent)}`
     return (
       <Box flexDirection="column">
-        <Text><Text bold>{fit(run.task, width - meta.length - 2)}</Text>  <Text color="cyan">{run.level}</Text><Text dimColor> · {usd(spent)}</Text></Text>
+        <Text><Text bold>{fit(run.task, width - meta.length - 2)}</Text>  <Text color="cyan">{run.level}</Text><Text dimColor>{`${time} · ${usd(spent)}`}</Text></Text>
         <Text>
           <Text color={allDone ? 'green' : 'cyan'}>{'█'.repeat(filled)}</Text>
           <Text dimColor>{'░'.repeat(barWidth - filled)}</Text>
@@ -357,7 +389,7 @@ export const register: Register = on => {
         {tasks.length > shown.length && <Text dimColor>{`  +${tasks.length - shown.length} more`}</Text>}
         {tasks.length > 0 && <Text> </Text>}
         <Button key="agents" plain dimColor onPress={() => void set($, { showAgents: !run.showAgents })}>
-          {fit(`${run.showAgents ? '▾' : '▸'} ${running.length} of ${run.workers} agents running · ${agents.length} so far`)}
+          {fit(`${run.showAgents ? '▾' : '▸'} ${running.length} of ${run.workers} agents running · ${agents.filter(a => a.role !== 'explore').length} so far`)}
         </Button>
         {run.showAgents && slots.map((a, i) => (a
           ? <Text key={`slot-${i}`}><Text color="yellow">◐</Text>{fit(` ${a.role.padEnd(8)} ${family(a.model).padEnd(6)} ${usd(a.usd).padStart(6)}  ${a.description}`, width - 1)}</Text>

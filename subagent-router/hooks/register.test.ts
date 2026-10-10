@@ -1,4 +1,4 @@
-import { test, expect } from 'claude-code/testing'
+import { test, expect, mock } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 type Engine = Parameters<TestBody>[0]
@@ -43,9 +43,9 @@ test('/subagent-router turns routing off and on', async ($, on) => {
   expect(got).toEqual([undefined, 'haiku'])
 })
 
-// the engine beneath for /orchestrate: records agent types, prompts and panes
+// the engine beneath for /orchestrate: records agent types, prompts and panes, on a clock the test moves
 const orchestra = (on: On) => {
-  const got = { types: [] as string[], prompts: [] as string[], opened: [] as string[], spawned: 0 }
+  const got = { types: [] as string[], prompts: [] as string[], opened: [] as string[], spawned: 0, clock: mock.clock(on, { now: 1_000_000 }) }
   on('agent.spawn', (_$, e) => ({ model: e.model ?? 'claude-sonnet-5-5', agentId: `a${got.spawned++}` }) as never)
   on('agent.register', (_$, e) => (got.types.push(`${e.name} ${e.model}-${e.effort}`), { value: { agent: `subagent-router:${e.name}` } }) as never)
   on('prompt.submit', (_$, e) => (got.prompts.push(e.text), { text: e.text }) as never)
@@ -139,4 +139,35 @@ test('Approve shows only while the orchestrator waits', async ($, on) => {
   expect(got.prompts.at(-1)).toBe('Approved. Go ahead.')
   expect(await ui.find({ key: 'approve' })).toBeUndefined()
   await ui.unmount()
+})
+
+test('the pane times the run and stops when the last task completes', async ($, on) => {
+  const { clock } = orchestra(on)
+  await $.command.run({ command: 'orchestrate', args: 'x' })
+  const ui = await $.ui.mount(PANE as never)
+  await ui.press({ key: 'start' })
+  await $.tool.call({ tool: TASKS, tasks: [{ id: '1', subject: 'Ship' }] } as never)
+  await clock.advance(65_000)
+  expect(await ui.find({ type: 'Text', text: ' · 1:05 · $0.00' })).toBeDefined()
+  await $.tool.call({ tool: TASKS, tasks: [{ id: '1', status: 'completed' }] } as never)
+  await clock.advance(30_000)
+  expect(await ui.find({ type: 'Text', text: ' · 1:05 · $0.00' })).toBeDefined()
+  await ui.unmount()
+  await $.command.run({ command: 'orchestrate', args: 'stop' })
+})
+
+test('a worker can spawn Explore past the limit, and nothing else', async ($, on) => {
+  orchestra(on)
+  await $.command.run({ command: 'orchestrate', args: 'x' })
+  const ui = await $.ui.mount(PANE as never)
+  for (let i = 0; i < 2; i++) await ui.press({ key: 'fewer' })
+  await ui.press({ key: 'start' })
+  await ui.unmount()
+  expect((await spawn($, 'subagent-router:worker')).deny).toBeUndefined()
+  expect((await spawn($, 'general-purpose', 'claude-sonnet-5-5', { parentAgentId: 'a0' })).deny).toBe('A worker can spawn Explore agents only.')
+  expect((await spawn($, 'subagent-router:worker', 'claude-sonnet-5-5', { parentAgentId: 'a0' })).deny).toBe('A worker can spawn Explore agents only.')
+  const explore = await spawn($, 'Explore', 'claude-sonnet-5-5', { parentAgentId: 'a0' })
+  expect(explore.deny).toBeUndefined()
+  expect(explore.model).toBe('haiku')
+  await $.command.run({ command: 'orchestrate', args: 'stop' })
 })
