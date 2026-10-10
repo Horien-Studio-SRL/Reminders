@@ -1,6 +1,6 @@
 {
   "name": "subagent-router",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Runs search subagents on Haiku and general-purpose ones on Sonnet, and /orchestrate splits a big task across scout, worker and reviewer subagents",
   "author": {
     "name": "Noash"
