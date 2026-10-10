@@ -100,24 +100,28 @@ test('two roles spawned at once at the limit: one starts, one is refused', async
   expect(denies).toContain('1 orchestration agents are running and the limit is 1. Wait for one to finish.')
 })
 
-test('the pane follows the orchestrator\'s task list', async ($, on) => {
+const TASKS = 'mcp__subagent-router__update_tasks'
+
+test('the pane follows the orchestrator\'s task list while it stays open', async ($, on) => {
   orchestra(on)
-  on('tool.call', (_$, e) => (e.tool === 'TaskCreate' ? { result: { task: { id: '1', subject: 'Write tests' } } } : { result: { success: true } }) as never)
   await $.command.run({ command: 'orchestrate', args: 'x' })
-  let ui = await $.ui.mount(PANE as never)
+  const ui = await $.ui.mount(PANE as never)
   await ui.press({ key: 'start' })
-  await ui.unmount()
-  await $.tool.call({ tool: 'TaskCreate', subject: 'Write tests', description: 'd' } as never)
-  await $.tool.call({ tool: 'TaskUpdate', taskId: '1', status: 'in_progress' } as never)
-  ui = await $.ui.mount(PANE as never)
-  expect(await ui.find({ type: 'Text', text: '0/1 tasks' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: ' 0/0 tasks' })).toBeDefined()
+  await $.tool.call({ tool: TASKS, tasks: [{ id: '1', subject: 'Write tests', contract: 'Goal: tests' }, { id: '2', subject: 'Ship', blockedBy: ['1'] }] } as never)
+  await $.tool.call({ tool: TASKS, tasks: [{ id: '1', status: 'completed' }] } as never)
+  expect(await ui.find({ type: 'Text', text: ' 1/2 tasks · 50%' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '→ Next: Ship' })).toBeDefined()
+  const list = await $.tool.call({ tool: TASKS } as never)
+  expect(list.result).toBe('#1 completed: Write tests\nGoal: tests\n#2 pending: Ship (after #1)')
+  await $.tool.call({ tool: TASKS, tasks: [{ id: '2', status: 'deleted' }] } as never)
+  expect(await ui.find({ type: 'Text', text: ' 1/1 tasks · 100%' })).toBeDefined()
   await ui.unmount()
   expect((await $.command.run({ command: 'orchestrate', args: 'stop' })).text).toBe('Orchestration stopped. Its agents spent about $0.00 at API prices.')
 })
 
-test('Approve shows only while the orchestrator waits, and the progress bar counts finished tasks', async ($, on) => {
+test('Approve shows only while the orchestrator waits', async ($, on) => {
   const got = orchestra(on)
-  on('tool.call', (_$, e) => (e.tool === 'TaskCreate' ? { result: { task: { id: String(got.spawned++), subject: 'T' } } } : { result: { success: true } }) as never)
   on('turn.start', () => ({}) as never)
   await $.command.run({ command: 'orchestrate', args: 'x' })
   let ui = await $.ui.mount(PANE as never)
@@ -126,12 +130,8 @@ test('Approve shows only while the orchestrator waits, and the progress bar coun
   await ui.unmount()
 
   await $.tool.call({ tool: 'mcp__subagent-router__await_approval', summary: 'Plan: 2 tasks' } as never)
-  await $.tool.call({ tool: 'TaskCreate', subject: 'T', description: 'd' } as never)
-  await $.tool.call({ tool: 'TaskCreate', subject: 'T', description: 'd' } as never)
-  await $.tool.call({ tool: 'TaskUpdate', taskId: '0', status: 'completed' } as never)
   ui = await $.ui.mount(PANE as never)
-  expect(await ui.find({ type: 'Text', text: 'Waiting for your approval: Plan: 2 tasks' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '1/2 tasks' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '⏸ Waiting for your approval: Plan: 2 tasks' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '· idle' })).toBeUndefined()
   await ui.press({ key: 'agents' })
   expect(await ui.findAll({ type: 'Text', text: '· idle' })).toHaveLength(3)

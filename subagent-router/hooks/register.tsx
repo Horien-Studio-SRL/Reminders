@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, TurnStepResult } from 'claude-code'
-import type { Approval, Level, Run } from '../types/index'
+import type { Approval, Level, Run, RunTask } from '../types/index'
 
 // Agent types whose work a cheaper model does as well; any other type keeps its own model.
 const ROUTES: Record<string, string> = { Explore: 'haiku', 'general-purpose': 'sonnet' }
@@ -50,6 +50,9 @@ const roleOf = (type: string) => (type.startsWith('subagent-router:') ? (type.sl
 
 // The orchestrator calls this where the skill says to wait; the pane shows Approve only then.
 const APPROVAL_TOOL = 'mcp__subagent-router__await_approval'
+// The run's task list, the mod's own: TaskCreate isn't in every session's toolset.
+const TASKS_TOOL = 'mcp__subagent-router__update_tasks'
+type TaskChange = { id: string; subject?: string; status?: string; blockedBy?: string[]; contract?: string }
 const registerRoles = ($: EngineInterface, level: Level) =>
   Promise.all([
     ...ROLES.map(r => {
@@ -60,6 +63,30 @@ const registerRoles = ($: EngineInterface, level: Level) =>
       name: 'await_approval',
       description: 'Orchestration only: ask the person to approve the plan or the next step. Shows an Approve button in the Orchestrate pane. End your turn right after calling it.',
       inputSchema: { type: 'object', properties: { summary: { type: 'string', description: 'What needs approval, in one line' } }, required: ['summary'] },
+      isDeferred: false,
+    }),
+    $.tool.register({
+      name: 'update_tasks',
+      description: 'Orchestration only: the run\'s task list, drawn in the Orchestrate pane. Each entry adds a task under a new id or changes the given fields of one already there; status "deleted" removes it. Call it with no tasks to read the list back with each contract.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tasks: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: 'Short id, such as "1"' },
+                subject: { type: 'string', description: 'A title of a few words for the pane' },
+                status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'deleted'] },
+                blockedBy: { type: 'array', items: { type: 'string' }, description: 'Ids of the tasks this one waits for; replaces the earlier list' },
+                contract: { type: 'string', description: 'Goal, Owns, Check, Review, Deliverable' },
+              },
+              required: ['id'],
+            },
+          },
+        },
+      },
       isDeferred: false,
     }),
   ])
@@ -207,22 +234,17 @@ export const register: Register = on => {
     return result
   })
 
-  // The orchestrator's task list, copied for the pane
-  on('tool.call', { tool: 'TaskCreate' }, async ($, e, next) => {
-    const r = await next(e)
-    const task = (r.result as { task?: { id: string; subject: string } } | undefined)?.task
-    if (task && (await read($, runAtom))?.started) await update($, tasksAtom, list => [...list, { id: task.id, subject: task.subject, status: 'pending', blockedBy: [] }])
-    return r
-  })
-
-  on('tool.call', { tool: 'TaskUpdate' }, async ($, e, next) => {
-    const r = await next(e)
-    if ((r.result as { success?: boolean } | undefined)?.success) {
-      await update($, tasksAtom, list => list
-        .filter(t => !(t.id === e.taskId && e.status === 'deleted'))
-        .map(t => (t.id === e.taskId ? { ...t, subject: e.subject ?? t.subject, status: e.status ?? t.status, blockedBy: [...new Set([...t.blockedBy, ...(e.addBlockedBy ?? [])])] } : t)))
-    }
-    return r
+  on('tool.call', { tool: TASKS_TOOL }, async ($, e) => {
+    const changes = (e as { tasks?: TaskChange[] }).tasks ?? []
+    const list = await update($, tasksAtom, list => changes.reduce((l, c) => {
+      if (c.status === 'deleted') return l.filter(t => t.id !== c.id)
+      const old = l.find(t => t.id === c.id)
+      const t = { id: c.id, subject: c.subject ?? old?.subject ?? `#${c.id}`, status: c.status ?? old?.status ?? 'pending', blockedBy: c.blockedBy ?? old?.blockedBy ?? [], contract: c.contract ?? old?.contract ?? '' }
+      return old ? l.map(x => (x.id === c.id ? t : x)) : [...l, t]
+    }, list))
+    // contracts only on a read, so each update doesn't echo them all back
+    const line = (t: RunTask) => `#${t.id} ${t.status}: ${t.subject}${t.blockedBy.length ? ` (after #${t.blockedBy.join(', #')})` : ''}${changes.length || !t.contract ? '' : `\n${t.contract}`}`
+    return { result: list.map(line).join('\n') || 'No tasks.' } as never
   })
 
   on('tool.call', { tool: APPROVAL_TOOL }, async ($, e) => {
@@ -251,77 +273,101 @@ export const register: Register = on => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const [run, tasks, agents] = await Promise.all([read($, runAtom), read($, tasksAtom), read($, agentsAtom)])
     if (!run) return <Text dimColor>No orchestration. /orchestrate &lt;task&gt; starts one.</Text>
+    const width = Math.max(20, e.props.bodyColumns || 60)
+    const fit = (text: string, n = width) => (text.length > n ? `${text.slice(0, n - 1)}…` : text)
     const pick = <T extends string>(key: string, options: T[], chosen: T, choose: (o: T) => void) => (
       <Box key={key}>
-        {options.map(o => <Button key={`${key}-${o}`} plain onPress={choose.bind(null, o)}>{o === chosen ? `[${o}] ` : ` ${o}  `}</Button>)}
+        {options.map(o => (o === chosen
+          ? <Button key={`${key}-${o}`} plain onPress={choose.bind(null, o)}><Text color="cyan" bold>{`● ${o}`}</Text>{'   '}</Button>
+          : <Button key={`${key}-${o}`} plain dimColor onPress={choose.bind(null, o)}>{`○ ${o}   `}</Button>))}
       </Box>
     )
 
     if (!run.started) {
       return (
         <Box flexDirection="column">
-          <Text bold>{run.task}</Text>
-          <Text> </Text>
-          <Text>Level</Text>
+          <Text bold>{fit(run.task)}</Text>
+          <Text dimColor>{'─'.repeat(Math.min(width, 40))}</Text>
+          <Text bold>Level</Text>
           {pick('level', LEVELS, run.level, level => void set($, { level }))}
-          <Text dimColor>{row(run.level)}{run.level === 'xhigh' ? '. Consider /model fable first.' : ''}</Text>
+          <Text dimColor>{fit(`${row(run.level)}${run.level === 'xhigh' ? '. Consider /model fable first.' : ''}`)}</Text>
           <Text> </Text>
           <Box>
-            <Text>Workers at once </Text>
-            <Button key="fewer" plain onPress={() => void set($, { workers: Math.max(1, run.workers - 1) })}>[-]</Button>
-            <Text bold> {run.workers} </Text>
-            <Button key="more" plain onPress={() => void set($, { workers: Math.min(8, run.workers + 1) })}>[+]</Button>
+            <Text bold>Agents at once  </Text>
+            <Button key="fewer" plain dimColor={run.workers === 1} onPress={() => void set($, { workers: Math.max(1, run.workers - 1) })}>−</Button>
+            <Text color="cyan" bold>{` ${run.workers} `}</Text>
+            <Button key="more" plain dimColor={run.workers === 8} onPress={() => void set($, { workers: Math.min(8, run.workers + 1) })}>+</Button>
           </Box>
           <Text> </Text>
-          <Text>Approval</Text>
+          <Text bold>Approval</Text>
           {pick('approval', APPROVALS, run.approval, approval => void set($, { approval }))}
           <Text dimColor>{{ plan: 'You approve the plan once, after scouting.', step: 'You approve before every step.', off: 'No pauses.' }[run.approval]}</Text>
           <Text> </Text>
           <Box>
-            <Button key="start" onPress={() => void start($)}>Start</Button>
+            <Button key="start" variant="primary" autoFocus onPress={() => void start($)}>Start</Button>
             <Text>  </Text>
-            <Button key="cancel" onPress={() => void stop($)}>Cancel</Button>
+            <Button key="cancel" dimColor onPress={() => void stop($)}>Cancel</Button>
           </Box>
         </Box>
       )
     }
 
-    // A fixed height, so the pane never grows over the prompt: header, bar, the agents toggle, status, buttons.
-    // Unfolded, the agents add one row per worker slot.
-    const width = Math.max(20, e.props.bodyColumns)
-    const fit = (text: string, n = width) => (text.length > n ? `${text.slice(0, n - 1)}…` : text)
+    // The height is capped so the pane never grows over the prompt: at most SHOWN task rows, and the agents fold.
+    const SHOWN = 5
     const spent = agents.reduce((sum, a) => sum + a.usd, 0)
     const done = tasks.filter(t => t.status === 'completed').length
-    const barWidth = Math.max(10, Math.min(40, width - 16))
+    const allDone = tasks.length > 0 && done === tasks.length
+    const label = `${done}/${tasks.length} tasks${tasks.length ? ` · ${Math.round((done / tasks.length) * 100)}%` : ''}`
+    const barWidth = Math.max(10, Math.min(40, width - label.length - 1))
     const filled = tasks.length ? Math.round((done / tasks.length) * barWidth) : 0
     const running = agents.filter(a => !a.isDone)
     const slots = Array.from({ length: run.workers }, (_, i) => running[i])
     const family = (model: string) => RANK.find(m => model.includes(m)) ?? model
-    const next = tasks.find(t => t.status === 'pending' && t.blockedBy.every(id => tasks.find(d => d.id === id)?.status === 'completed'))
-    const status = run.awaiting ? `Waiting for your approval: ${run.awaiting}`
-      : !tasks.length ? 'Scouting and planning'
-      : done === tasks.length ? 'All tasks done'
-      : next ? `Next: ${next.subject}` : 'Working'
+    // a deleted blocker no longer holds a task back
+    const ready = (t: RunTask) => t.blockedBy.every(id => (tasks.find(d => d.id === id)?.status ?? 'completed') === 'completed')
+    const next = tasks.find(t => t.status === 'pending' && ready(t))
+    // the window starts one row above the first unfinished task
+    const unfinished = tasks.findIndex(t => t.status !== 'completed')
+    const from = Math.max(0, Math.min((unfinished < 0 ? tasks.length : unfinished) - 1, tasks.length - SHOWN))
+    const shown = tasks.slice(from, from + SHOWN)
+    const taskRow = (t: RunTask) => {
+      const [icon, color] = t.status === 'completed' ? ['✓', 'green'] : t.status === 'in_progress' ? ['◐', 'yellow'] : ['○', undefined]
+      const waits = t.status === 'pending' && !ready(t) ? `  after #${t.blockedBy.join(', #')}` : ''
+      return (
+        <Text key={`task-${t.id}`} dimColor={t.status === 'completed' || !!waits}>
+          <Text color={color}>{icon}</Text> {fit(`${t.subject}${waits}`, width - 2)}
+        </Text>
+      )
+    }
+    const status = run.awaiting ? `⏸ Waiting for your approval: ${run.awaiting}`
+      : !tasks.length ? '… Scouting and planning'
+      : allDone ? '✓ All tasks done'
+      : next ? `→ Next: ${next.subject}` : '… Working'
     const meta = `${run.level} · ${usd(spent)}`
     return (
       <Box flexDirection="column">
-        <Text><Text bold>{fit(run.task, width - meta.length - 2)}</Text><Text dimColor>  {meta}</Text></Text>
+        <Text><Text bold>{fit(run.task, width - meta.length - 2)}</Text>  <Text color="cyan">{run.level}</Text><Text dimColor> · {usd(spent)}</Text></Text>
         <Text>
-          <Text color="green">{'█'.repeat(filled)}</Text>
-          <Text dimColor>{'░'.repeat(barWidth - filled)} {done}/{tasks.length} tasks</Text>
+          <Text color={allDone ? 'green' : 'cyan'}>{'█'.repeat(filled)}</Text>
+          <Text dimColor>{'░'.repeat(barWidth - filled)}</Text>
+          <Text> {label}</Text>
         </Text>
-        <Button key="agents" plain onPress={() => void set($, { showAgents: !run.showAgents })}>
+        <Text> </Text>
+        {shown.map(taskRow)}
+        {tasks.length > shown.length && <Text dimColor>{`  +${tasks.length - shown.length} more`}</Text>}
+        {tasks.length > 0 && <Text> </Text>}
+        <Button key="agents" plain dimColor onPress={() => void set($, { showAgents: !run.showAgents })}>
           {fit(`${run.showAgents ? '▾' : '▸'} ${running.length} of ${run.workers} agents running · ${agents.length} so far`)}
         </Button>
         {run.showAgents && slots.map((a, i) => (a
-          ? <Text key={`slot-${i}`}>{fit(`◐ ${a.role.padEnd(8)} ${family(a.model).padEnd(6)} ${usd(a.usd).padStart(6)}  ${a.description}`)}</Text>
+          ? <Text key={`slot-${i}`}><Text color="yellow">◐</Text>{fit(` ${a.role.padEnd(8)} ${family(a.model).padEnd(6)} ${usd(a.usd).padStart(6)}  ${a.description}`, width - 1)}</Text>
           : <Text key={`slot-${i}`} dimColor>· idle</Text>))}
+        <Text color={run.awaiting ? 'yellow' : allDone ? 'green' : undefined} bold={!!run.awaiting} dimColor={!run.awaiting && !allDone}>{fit(status)}</Text>
         <Text> </Text>
-        <Text color={run.awaiting ? 'yellow' : undefined} bold={!!run.awaiting} dimColor={!run.awaiting}>{fit(status)}</Text>
         <Box>
-          {run.awaiting && <Button key="approve" onPress={() => void approve($)}>Approve</Button>}
+          {run.awaiting && <Button key="approve" variant="primary" autoFocus onPress={() => void approve($)}>Approve</Button>}
           {run.awaiting && <Text>  </Text>}
-          <Button key="stop" onPress={() => void stop($).then(text => $.ui.toast(text))}>Stop</Button>
+          <Button key="stop" dimColor onPress={() => void stop($).then(text => $.ui.toast(text))}>Stop</Button>
         </Box>
       </Box>
     )
